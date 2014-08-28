@@ -42,7 +42,9 @@ class Polly(object):
         self.words = {}
         self.emitted = set()
         self.bad = set()
-        self.latest = datetime.datetime(2014, 8, 22, 0, 0, 0)
+        # This keeps me from going back too far in the folder. I suppose I
+        # should make this a parameter...
+        self.latest = datetime.datetime(2014, 5, 1, 0, 0, 0)
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
@@ -85,7 +87,10 @@ class Polly(object):
     def process_text(self, text, threshold):
         "must be called inside a 'with' statement."
         for word in text.split():
-            if len(word) < 4 or set(word) & self.punct or word.lower() != word:
+            if (word in self.bad or
+                len(word) < 4 or
+                set(word) & self.punct or
+                word.lower() != word):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
             if (word not in self.emitted and
