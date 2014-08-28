@@ -21,5 +21,7 @@ common words to use as the basis of a simple random XKCD 936 password
 generator.
 
 Run "python polly.py -h" to get a brief description of how to run the
-program.
-
+program. See polly.cfg.sample for a sample config file.  It's particularly
+easy to connect to a Gmail server. Generate an application password to use
+in the password field, then create a filter to funnel common *public*
+mailing list mail into a "polly" label, then set the folder option to polly.
