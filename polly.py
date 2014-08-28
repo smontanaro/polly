@@ -45,7 +45,9 @@ import dateutil.parser
 PROG = os.path.split(sys.argv[0])[1]
 
 class Polly(object):
-    def __init__(self):
+    def __init__(self, options):
+        self.reader = None
+        self.options = options
         self.punct = set(string.punctuation+string.digits)
         self.msg_ids = set()
         self.words = {}
@@ -93,8 +95,9 @@ class Polly(object):
             pickle.dump((self.msg_ids, self.words,
                          self.emitted, self.latest, self.bad), pfile)
 
-    def process_text(self, text, threshold):
+    def process_text(self, text):
         "must be called inside a 'with' statement."
+        threshold = self.options["common"]
         for word in text.split():
             if (word in self.bad or
                 len(word) < 4 or
@@ -106,7 +109,8 @@ class Polly(object):
                 self.words[word] > 10 and
                 len(self.words) > 100):
                 counts = sorted(self.words.values())
-                if counts.index(self.words[word]) >= threshold * len(self.words):
+                min_index = threshold * len(self.words)
+                if counts.index(self.words[word]) >= min_index:
                     self.emitted.add(word)
 
     def print_statistics(self):
@@ -174,13 +178,9 @@ def main(args):
         usage("Server, user, password and folder are all required.")
         return 1
 
-    polly = Polly()
+    polly = Polly(options)
 
-    procmail_t = threading.Thread(target=read_imap, name="imap-thread",
-                                  args=(polly, options))
-
-    procmail_t.daemon = True
-    procmail_t.start()
+    start_reader(polly)
     try:
         get_commands(polly)
     except KeyboardInterrupt:
@@ -189,6 +189,16 @@ def main(args):
         polly.save_pfile()
 
     return 0
+
+def start_reader(polly):
+    with polly:
+        if polly.reader is not None and polly.reader.is_alive():
+            polly.reader = threading.Thread(target=read_imap,
+                                            name="imap-thread",
+                                            args=(polly,))
+
+            polly.reader.daemon = True
+            polly.reader.start()
 
 def get_commands(polly):
     try:
@@ -210,6 +220,8 @@ def get_commands(polly):
             if command == "password":
                 with polly:
                     print polly.get_password()
+            elif command == "read":
+                start_reader(polly)
             elif command == "stat":
                 with polly:
                     polly.print_statistics()
@@ -223,6 +235,7 @@ def get_commands(polly):
                 print "  password - generate a password"
                 print "  bad word word ... - mark one or more words as bad"
                 print "  dict dictfile - report words not in dictfile"
+                print "  read - restart the read_imap thread if it stopped"
                 print "  stat - print some simple statistics"
                 print "  save - write the pickle save file"
                 print "  <RET> - repeat last command"
@@ -242,7 +255,9 @@ def get_commands(polly):
     except KeyboardInterrupt:
         pass
 
-def read_imap(polly, options):
+def read_imap(polly):
+    with polly:
+        options = polly.options
     mail = imaplib.IMAP4_SSL(options["server"])
     mail.login(options["user"], options["password"])
     mail.select(options["folder"])
@@ -251,9 +266,11 @@ def read_imap(polly, options):
         with polly:
             stamp = polly.latest.strftime("%d-%b-%Y")
         constraint = "(SENTSINCE %s)" % stamp
-        result, data = mail.uid('search', None, constraint)
-        if result != "OK":
+        try:
+            _result, data = mail.uid('search', None, constraint)
+        except imaplib.IMAP4.error:
             print >> sys.stderr, "Failed to search for constraint:", constraint
+            print >> sys.stderr, "Please send 'read' command later"
             return
 
         message_dates = []
@@ -280,7 +297,7 @@ def read_imap(polly, options):
                 text = get_text(message)
                 if text is None:
                     continue
-                polly.process_text(text, options["common"])
+                polly.process_text(text)
         with polly:
             polly.latest = (max([polly.latest]+message_dates) -
                             datetime.timedelta(days=1))
