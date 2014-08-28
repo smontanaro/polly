@@ -32,6 +32,7 @@ import sys
 import textwrap
 import threading
 import time
+import dateutil.parser
 
 PROG = os.path.split(sys.argv[0])[1]
 
@@ -44,7 +45,7 @@ class Polly(object):
         self.bad = set()
         # This keeps me from going back too far in the folder. I suppose I
         # should make this a parameter...
-        self.latest = datetime.datetime(2014, 5, 1, 0, 0, 0)
+        self.latest = datetime.datetime(2014, 8, 1, 0, 0, 0)
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
@@ -105,6 +106,7 @@ class Polly(object):
         print "all words:", len(self.words)
         print "common words:", len(self.emitted)
         print "'bad' words:", len(self.bad)
+        print "last date:", self.latest
 
 def usage(msg=""):
     if msg:
@@ -231,8 +233,6 @@ def get_commands(polly):
 def read_imap(polly, options):
     mail = imaplib.IMAP4_SSL(options["server"])
     mail.login(options["user"], options["password"])
-    mail.list()
-    # Out: list of "folders" aka labels in gmail.
     mail.select(options["folder"])
 
     while True:
@@ -244,12 +244,21 @@ def read_imap(polly, options):
             print >> sys.stderr, "Failed to search for constraint:", constraint
             return
 
+        message_dates = []
+        dflt_date = datetime.datetime(2014, 1, 1, 0, 0, 0)
         for uid in data[0].split():
             result, data = mail.fetch(uid, "(RFC822)")
             try:
                 message = email.message_from_string(data[0][1])
             except TypeError:
                 continue
+            try:
+                msg_date = dateutil.parser.parse(message["Date"])
+            except TypeError:
+                msg_date = dflt_date
+            else:
+                msg_date = msg_date.replace(tzinfo=None)
+            message_dates.append(msg_date)
 
             msg_id = message["Message-Id"]
             with polly:
@@ -260,7 +269,9 @@ def read_imap(polly, options):
                 if text is None:
                     continue
                 polly.process_text(text, options["common"])
-                polly.latest = datetime.datetime.now()
+        with polly:
+            polly.latest = max([polly.latest]+message_dates)
+
         time.sleep(60)
 
 def get_text(message):
