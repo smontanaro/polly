@@ -25,3 +25,9 @@ program. See polly.cfg.sample for a sample config file.  It's particularly
 easy to connect to a Gmail server. Generate an application password to use
 in the password field, then create a filter to funnel common *public*
 mailing list mail into a "polly" label, then set the folder option to polly.
+Once you have the config file set up, just run it like so:
+
+python polly.py -c polly.cfg
+
+Enter "help" at the "?" prompt to get a sumary of commands you can run at
+the prompt.
