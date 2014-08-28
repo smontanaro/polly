@@ -9,11 +9,17 @@ game server:
 
 https://mail.python.org/pipermail/python-list/2014-August/677475.html
 
-I don't play Dungeons & Dragons, so I needed another way to build a
-dictionary. It occurred to me that selecting various messages from a large
-body of messages on an IMAP server might work. I'm a Gmail user, so it was
-easy to create a filter which labeled messages sent to a number of public
-mailing lists and Internet forums as "polly", then point a program at that
-"folder" and collect common words to use as the basis of a simple random
-XKCD 936 password generator.
+In that game, Polly is a parrot who listens to the chatter and spits out
+passwords when asked.  I thought it was an excellent idea, but as I don't
+play Dungeons & Dragons, I needed another way to build a dictionary of
+common words. It occurred to me that searching messages from an IMAP server
+for commonly used words might work. I'm a Gmail user, so it was easy to
+create a new filter which labeled messages sent to a number of public
+mailing lists and Internet forums as "polly". Instant corpus!  The polly
+program is pointed at the polly "folder" on my Gmail account and collects
+common words to use as the basis of a simple random XKCD 936 password
+generator.
+
+Run "python polly.py -h" to get a brief description of how to run the
+program.
 
