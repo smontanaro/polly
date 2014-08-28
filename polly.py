@@ -19,6 +19,14 @@ passwords. This option may only be given in the config file.
 
 """
 
+# TODO:
+
+# * Access IMAP server messages more efficiently (maybe peek at headers and
+#   only pull the full message if we've not yet seen the message-id?
+# * readline/history support for the interactive prompt
+# * optional count arg for the password command (generate that many at one
+#   go)
+
 from ConfigParser import RawConfigParser, NoOptionError
 import cPickle as pickle
 import datetime
@@ -205,6 +213,9 @@ def get_commands(polly):
             elif command == "stat":
                 with polly:
                     polly.print_statistics()
+            elif command == "save":
+                with polly:
+                    polly.save_pfile()
             elif command == "exit":
                 break
             elif command in ("help", "?"):
@@ -213,6 +224,7 @@ def get_commands(polly):
                 print "  bad word word ... - mark one or more words as bad"
                 print "  dict dictfile - report words not in dictfile"
                 print "  stat - print some simple statistics"
+                print "  save - write the pickle save file"
                 print "  <RET> - repeat last command"
                 print "  help or ? - this help"
                 print "  exit - exit"
@@ -270,7 +282,8 @@ def read_imap(polly, options):
                     continue
                 polly.process_text(text, options["common"])
         with polly:
-            polly.latest = max([polly.latest]+message_dates)
+            polly.latest = (max([polly.latest]+message_dates) -
+                            datetime.timedelta(days=1))
 
         time.sleep(60)
 
