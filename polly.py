@@ -97,8 +97,8 @@ class Polly(object):
 
     def print_statistics(self):
         print "messages:", len(self.msg_ids)
-        print "words:", len(self.words)
-        print "'good' words:", len(self.emitted)
+        print "all words:", len(self.words)
+        print "common words:", len(self.emitted)
         print "'bad' words:", len(self.bad)
 
 def usage(msg=""):
