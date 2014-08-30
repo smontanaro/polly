@@ -72,7 +72,10 @@ class Polly(object):
 
     def get_not_words(self, dictfile):
         with open(dictfile) as dictfp:
-            dict_words = set([w.strip() for w in dictfp])
+            raw = [w.strip() for w in dictfp]
+            dict_words = set(raw)
+            for suffix in ("ing", "ed", "es", "s", "ies"):
+                dict_words |= set([w+suffix for w in raw])
             return sorted(self.emitted - dict_words)
 
     def load_pfile(self):
