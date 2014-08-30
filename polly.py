@@ -19,14 +19,6 @@ passwords. This option may only be given in the config file.
 
 """
 
-# TODO:
-
-# * Access IMAP server messages more efficiently (maybe peek at headers and
-#   only pull the full message if we've not yet seen the message-id?
-# * readline/history support for the interactive prompt
-# * optional count arg for the password command (generate that many at one
-#   go)
-
 from ConfigParser import RawConfigParser, NoOptionError
 import cPickle as pickle
 import datetime
@@ -44,6 +36,7 @@ import dateutil.parser
 
 PROG = os.path.split(sys.argv[0])[1]
 
+DFLT_DATE = datetime.datetime(2014, 8, 1, 0, 0, 0)
 class Polly(object):
     def __init__(self, options):
         self.reader = None
@@ -55,7 +48,7 @@ class Polly(object):
         self.bad = set()
         # This keeps me from going back too far in the folder. I suppose I
         # should make this a parameter...
-        self.latest = datetime.datetime(2014, 8, 1, 0, 0, 0)
+        self.latest = DFLT_DATE
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
@@ -114,11 +107,20 @@ class Polly(object):
                     self.emitted.add(word)
 
     def print_statistics(self):
-        print "messages:", len(self.msg_ids)
+        print "message ids:", len(self.msg_ids)
         print "all words:", len(self.words)
         print "common words:", len(self.emitted)
         print "'bad' words:", len(self.bad)
         print "last date:", self.latest
+
+    def start_reader(self):
+        if self.reader is None or not self.reader.is_alive():
+            note("starting IMAP thread.")
+            self.reader = threading.Thread(target=read_imap,
+                                            name="imap-thread",
+                                            args=(self,))
+            self.reader.daemon = True
+            self.reader.start()
 
 def usage(msg=""):
     if msg:
@@ -180,7 +182,6 @@ def main(args):
 
     polly = Polly(options)
 
-    start_reader(polly)
     try:
         get_commands(polly)
     except KeyboardInterrupt:
@@ -189,16 +190,6 @@ def main(args):
         polly.save_pfile()
 
     return 0
-
-def start_reader(polly):
-    with polly:
-        if polly.reader is not None and polly.reader.is_alive():
-            polly.reader = threading.Thread(target=read_imap,
-                                            name="imap-thread",
-                                            args=(polly,))
-
-            polly.reader.daemon = True
-            polly.reader.start()
 
 def get_commands(polly):
     try:
@@ -221,7 +212,8 @@ def get_commands(polly):
                 with polly:
                     print polly.get_password()
             elif command == "read":
-                start_reader(polly)
+                with polly:
+                    polly.start_reader()
             elif command == "stat":
                 with polly:
                     polly.print_statistics()
@@ -255,16 +247,27 @@ def get_commands(polly):
     except KeyboardInterrupt:
         pass
 
-def read_imap(polly):
-    with polly:
-        options = polly.options
-    mail = imaplib.IMAP4_SSL(options["server"])
-    mail.login(options["user"], options["password"])
-    mail.select(options["folder"])
+def note(msg):
+    sys.stdout.write("\n%s\n? " % msg)
+    sys.stdout.flush()
 
+def read_imap(polly):
     while True:
-        with polly:
-            stamp = polly.latest.strftime("%d-%b-%Y")
+        read_loop(polly)
+        time.sleep(600)
+
+def read_loop(polly):
+    with polly:
+        latest = polly.latest
+        options = polly.options.copy()
+        msg_ids = polly.msg_ids.copy()
+
+    with IMAP(options["server"]) as mail:
+        mail.login(options["user"], options["password"])
+        mail.select(options["folder"])
+
+        nhdrs = nmsgs = nnew = 0
+        stamp = latest.strftime("%d-%b-%Y")
         constraint = "(SENTSINCE %s)" % stamp
         try:
             _result, data = mail.uid('search', None, constraint)
@@ -273,36 +276,70 @@ def read_imap(polly):
             print >> sys.stderr, "Please send 'read' command later"
             return
 
-        message_dates = []
-        dflt_date = datetime.datetime(2014, 1, 1, 0, 0, 0)
-        for uid in data[0].split():
-            result, data = mail.fetch(uid, "(RFC822)")
+        uids = data[0].split()
+        if uids:
+            note("Will process %d uids" % len(uids))
+        for uid in uids:
+            # First, check the message-id to see if we've already seen it.
+            _, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
+            nhdrs += 1
             try:
                 message = email.message_from_string(data[0][1])
             except TypeError:
                 continue
+            msg_id = message.get("Message-ID")
+            if msg_id is None or msg_id in msg_ids:
+                continue
+            msg_ids.add(msg_id)
+
+            # Okay, we haven't seen this message yet. Process its text
+            # (well, the first text part we come across).
+            nmsgs += 1
+            _, data = mail.fetch(uid, "(RFC822 BODY.PEEK[])")
             try:
-                msg_date = dateutil.parser.parse(message["Date"])
+                message = email.message_from_string(data[0][1])
             except TypeError:
-                msg_date = dflt_date
-            else:
-                msg_date = msg_date.replace(tzinfo=None)
-            message_dates.append(msg_date)
+                continue
+            text = get_text(message)
+            if text is None:
+                continue
 
-            msg_id = message["Message-Id"]
+            nnew += 1
             with polly:
-                if msg_id in polly.msg_ids:
-                    continue
-                polly.msg_ids.add(msg_id)
-                text = get_text(message)
-                if text is None:
-                    continue
                 polly.process_text(text)
-        with polly:
-            polly.latest = (max([polly.latest]+message_dates) -
-                            datetime.timedelta(days=1))
 
-        time.sleep(60)
+            if nnew % 100 == 0:
+                note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
+                with polly:
+                    polly.latest = latest
+                    polly.msg_ids = msg_ids
+            # Remember the date for the next time.
+            msg_date = message.get("Date")
+            if msg_date is None:
+                msg_date = DFLT_DATE
+            else:
+                try:
+                    msg_date = dateutil.parser.parse(msg_date)
+                    msg_date = msg_date.replace(tzinfo=None)
+                except TypeError:
+                    note("Invalid date string: %r" % msg_date)
+                    msg_date = DFLT_DATE
+            latest = max(latest, msg_date)
+
+            with polly:
+                polly.latest = latest
+
+            note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
+
+class IMAP(imaplib.IMAP4_SSL):
+    def __init__(self, server):
+        imaplib.IMAP4_SSL.__init__(self, server)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _type, _value, _traceback):
+        self.close()
 
 def get_text(message):
     maintype = message.get_content_maintype()
