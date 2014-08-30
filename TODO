@@ -1,0 +1,11 @@
+There will always be things to do...
+
+* Access IMAP server messages more efficiently (maybe peek at headers and
+  only pull the full message if we've not yet seen the message-id?
+
+(done)
+
+* readline/history support for the interactive prompt
+
+* optional count arg for the password command (generate that many at one go)
+
