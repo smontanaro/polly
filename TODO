@@ -19,3 +19,5 @@ There will always be things to do...
   be retained across deletions of the pickle. Also, should be plain text to
   allow easy editing.
 
+* Should get message ids all at once (how?), then quickly discard all we've
+  seen.
