@@ -13,3 +13,9 @@ There will always be things to do...
 
 * Beef up words file cheaply.
 
+(done)
+
+* Bad words should be remembered separately from the normal pickle so it can
+  be retained across deletions of the pickle. Also, should be plain text to
+  allow easy editing.
+
