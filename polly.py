@@ -208,9 +208,18 @@ def get_commands(polly):
                     continue
                 command = last_command
             last_command = command
+            try:
+                command, rest = command.split(None, 1)
+            except ValueError:
+                rest = ""
             if command == "password":
+                count = int(rest) if rest else 1
+                if count > 20:
+                    note("Try printing no more than 20 passwords at once.")
+                    count = 20
                 with polly:
-                    print polly.get_password()
+                    for n in range(count):
+                        print polly.get_password()
             elif command == "read":
                 with polly:
                     polly.start_reader()
@@ -224,7 +233,7 @@ def get_commands(polly):
                 break
             elif command in ("help", "?"):
                 print "commands:"
-                print "  password - generate a password"
+                print "  password [n] - generate one or more passwords"
                 print "  bad word word ... - mark one or more words as bad"
                 print "  dict dictfile - report words not in dictfile"
                 print "  read - restart the read_imap thread if it stopped"
@@ -234,7 +243,6 @@ def get_commands(polly):
                 print "  help or ? - this help"
                 print "  exit - exit"
             else:
-                command, rest = command.split(None, 1)
                 if command == "bad":
                     with polly:
                         for word in rest.split():
