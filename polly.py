@@ -67,8 +67,6 @@ class Polly(object):
         nwords = self.options["nwords"]
         words = list(self.emitted)
         if len(words) > nwords and len(self.words) > nwords:
-            if self.options["verbose"]:
-                note("Using %d most common words." % nwords)
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[:nwords]]
         random.shuffle(words)
@@ -79,12 +77,31 @@ class Polly(object):
         self.emitted.discard(word)
 
     def get_not_words(self, dictfile):
+        if not os.path.exists(dictfile):
+            note("%r does not exist" % dictfile)
+            return []
         with open(dictfile) as dictfp:
             raw = [w.strip().lower() for w in dictfp]
             dict_words = set(raw)
             for suffix in ("ing", "ed", "es", "s", "ies"):
                 dict_words |= set([w+suffix for w in raw])
             return sorted(self.emitted - dict_words)
+
+    def add_words(self, dictfile, nwords):
+        if not os.path.exists(dictfile):
+            note("%r does not exist" % dictfile)
+            return
+        upper_and_punct = self.punct | set(string.uppercase)
+        with open(dictfile) as dictfp:
+            raw = [w.strip()
+                     for w in dictfp
+                       if (not set(w) & upper_and_punct) and len(w) > 4]
+            random.shuffle(raw)
+            candidates = set(raw[:nwords])
+            while candidates & self.emitted != candidates:
+                # Keep trying until all words have been added to the
+                # good set.
+                self.consider_words(candidates)
 
     def load_pfile(self):
         try:
@@ -106,8 +123,11 @@ class Polly(object):
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
+        self.consider_words(text.split())
+
+    def consider_words(self, candidates):
         threshold = self.options["threshold"]
-        for word in text.split():
+        for word in candidates:
             if (word in self.bad or
                 len(word) < 4 or
                 set(word) & self.punct or
@@ -249,6 +269,11 @@ def get_commands(polly):
                     note("Try printing no more than 20 passwords at once.")
                     count = 20
                 with polly:
+                    nwords = polly.options["nwords"]
+                    if (len(polly.emitted) > nwords and
+                        len(polly.words) > nwords and
+                        polly.options["verbose"]):
+                        note("Using %d most common words." % nwords)
                     for _ in range(count):
                         print polly.get_password()
             elif command == "read":
@@ -268,13 +293,14 @@ def get_commands(polly):
                 break
             elif command in ("help", "?"):
                 print "commands:"
-                print "  password [n] - generate one or more passwords"
+                print "  add dictfile n - add n random words from dictfile"
                 print "  bad word word ... - mark one or more words as bad"
                 print "  dict dictfile - report words not in dictfile"
+                print "  password [n] - generate one or more passwords"
                 print "  read - restart the read_imap thread if it stopped"
-                print "  stat - print some simple statistics"
                 print "  save - write the pickle save file"
-                print "  verbose - toggler verbose flag"
+                print "  stat - print some simple statistics"
+                print "  verbose - toggle verbose flag"
                 print "  <RET> - repeat last command"
                 print "  help or ? - this help"
                 print "  exit - exit"
@@ -287,9 +313,17 @@ def get_commands(polly):
                     with polly:
                         not_really_words = " ".join(polly.get_not_words(rest))
                         print textwrap.fill(not_really_words)
-
+                elif command == "add":
+                    with polly:
+                        dictfile, nwords = rest.split()
+                        nwords = int(nwords)
+                        polly.add_words(dictfile, nwords)
+                else:
+                    note("Unrecognized command %r" % command)
     except KeyboardInterrupt:
         pass
+
+    note("Awk! Goodbye...")
 
 def note(msg):
     sys.stdout.write("\n%s\n? " % msg)
