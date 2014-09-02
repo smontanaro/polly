@@ -21,3 +21,9 @@ There will always be things to do...
 
 * Should get message ids all at once (how?), then quickly discard all we've
   seen.
+
+* Need to do something other than "look back 10 days" when starting up. Not
+  sure how that whole thing is supposed to work. Ideally, you'd process the
+  entire folder the first time around, then "RECENT" messages after
+  that. I'm sure the current scheme would be hard on lesser IMAP servers.
+
