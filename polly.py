@@ -11,11 +11,15 @@ on the IMAP server. The folder is the name of the folder on the IMAP server
 to monitor for mail.
 
 The config file has a single section, Polly. Within that section, each of
-the server, user, password, and folder options may be given. In addition, a
-'common' option may be given, a floating point number between 0 and 1
-(default 0.6) which defines the threshold above which a word is assumed to
-be used commonly in the corpus, and can thus be used in generated
-passwords. This option may only be given in the config file.
+the server, user, password, and folder options may be given. Two parameters
+dictate how many words will be considered to be 'common. A 'threshold'
+option may be given, a floating point number between 0 and 1 (default 0.6)
+which defines the threshold above which a word is assumed to be used
+commonly in the corpus, and can thus be used in generated passwords. This
+option may only be given in the config file. An 'nwords' option may also be
+given, which indicates the number of most common words to use when
+generating passwords. The parameter which yields the smaller number of words
+takes precedence.
 
 """
 
@@ -60,7 +64,13 @@ class Polly(object):
         self.sema.release()
 
     def get_password(self):
+        nwords = self.options["nwords"]
         words = list(self.emitted)
+        if len(words) > nwords and len(self.words) > nwords:
+            if self.options["verbose"]:
+                note("Using %d most common words." % nwords)
+            counts = sorted(zip(self.words.values(), self.words.keys()))
+            words = [w for (_count, w) in counts[:nwords]]
         random.shuffle(words)
         return " ".join(words[0:4])
 
@@ -96,7 +106,7 @@ class Polly(object):
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
-        threshold = self.options["common"]
+        threshold = self.options["threshold"]
         for word in text.split():
             if (word in self.bad or
                 len(word) < 4 or
@@ -140,7 +150,8 @@ def main(args):
         "user": None,
         "password": None,
         "folder": None,
-        "common": None,
+        "threshold": None,
+        "nwords": None,
         "verbose": None,
         }
     getters = {
@@ -148,7 +159,8 @@ def main(args):
         "user": "get",
         "password": "get",
         "folder": "get",
-        "common": "getfloat",
+        "threshold": "getfloat",
+        "nwords": "getint",
         "verbose": "getboolean",
         }
 
@@ -188,8 +200,11 @@ def main(args):
         if options["verbose"] is None:
             options["verbose"] = False
 
-        if options["common"] is None:
-            options["common"] = 0.6
+        if options["threshold"] is None:
+            options["threshold"] = 0.6
+
+        if options["nwords"] is None:
+            options["nwords"] = 2048
 
     if None in options.values():
         usage("Server, user, password and folder are all required.")
@@ -318,7 +333,7 @@ def read_loop(polly):
             if result != "OK":
                 note("failed to search for constraint: %s" % constraint)
                 return
-        
+
         uids = data[0].split()
         if verbose:
             note("search successful - %d uids returned." % len(uids))
