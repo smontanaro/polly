@@ -80,7 +80,7 @@ class Polly(object):
 
     def get_not_words(self, dictfile):
         with open(dictfile) as dictfp:
-            raw = [w.strip() for w in dictfp]
+            raw = [w.strip().lower() for w in dictfp]
             dict_words = set(raw)
             for suffix in ("ing", "ed", "es", "s", "ies"):
                 dict_words |= set([w+suffix for w in raw])
@@ -126,7 +126,8 @@ class Polly(object):
         print "message ids:", len(self.msg_ids)
         print "all words:", len(self.words)
         print "common words:", len(self.emitted),
-        print "entropy:", "%.2f" % math.log(len(self.emitted), 2), "bits"
+        bits = math.log(len(self.emitted), 2) if self.emitted else 0
+        print "entropy:", "%.2f" % bits, "bits"
         print "'bad' words:", len(self.bad)
 
     def start_reader(self):
@@ -304,20 +305,21 @@ def read_loop(polly):
         options = polly.options.copy()
         msg_ids = polly.msg_ids.copy()
 
-    verbose = options["verbose"]
+    # Reference the verbose parameter through the options dict so the
+    # user can toggle the setting on-the-fly.
     with IMAP(options["server"]) as mail:
         try:
             mail.login(options["user"], options["password"])
         except IMAP.error:
             note("login failed. check your credentials.")
             return
-        if verbose:
+        if options["verbose"]:
             note("login successful.")
         (result, data) = mail.select(options["folder"])
         if result != "OK":
             note("failed to select folder %r." % options["folder"])
             return
-        if verbose:
+        if options["verbose"]:
             note("select folder %r." % options["folder"])
 
         nhdrs = nmsgs = nnew = 0
@@ -335,7 +337,7 @@ def read_loop(polly):
                 return
 
         uids = data[0].split()
-        if verbose:
+        if options["verbose"]:
             note("search successful - %d uids returned." % len(uids))
         if uids:
             note("Will process %d uids" % len(uids))
@@ -355,8 +357,12 @@ def read_loop(polly):
             if msg_id is None or msg_id in msg_ids:
                 continue
             msg_ids.add(msg_id)
-            if verbose:
-                note("New message id: %s" % msg_id)
+            # Reference the verbose parameter here through
+            # self.options so the user can toggle the setting
+            # on-the-fly.
+            with polly:
+                if polly.options["verbose"]:
+                    note("New message id: %s" % msg_id)
 
             # Okay, we haven't seen this message yet. Process its text
             # (well, the first text part we come across).
@@ -380,7 +386,7 @@ def read_loop(polly):
             if nnew % 10 == 0:
                 note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
                 with polly:
-                    polly.msg_ids = msg_ids
+                    polly.msg_ids = msg_ids.copy()
             # Remember the date for the next time.
             msg_date = message.get("Date")
             if msg_date is None:
@@ -389,7 +395,7 @@ def read_loop(polly):
                 try:
                     msg_date = dateutil.parser.parse(msg_date)
                     msg_date = msg_date.replace(tzinfo=None)
-                except TypeError:
+                except (ValueError, TypeError):
                     note("Invalid date string: %r" % msg_date)
                     msg_date = DFLT_DATE
 
