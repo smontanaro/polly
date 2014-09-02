@@ -3,4 +3,5 @@ server = imap.gmail.com
 user = someone@gmail.com
 password = password-of-someone
 folder = IMAP-folder-to-watch
-common = 0.5
+threshold = 0.5
+nwords = 2048
