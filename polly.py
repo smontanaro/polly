@@ -98,10 +98,16 @@ class Polly(object):
                        if (not set(w) & upper_and_punct) and len(w) > 4]
             random.shuffle(raw)
             candidates = set(raw[:nwords])
-            while candidates & self.emitted != candidates:
-                # Keep trying until all words have been added to the
-                # good set.
-                self.consider_words(candidates)
+            if not self.emitted:
+                # Cheat. Just initialize from the candidates.
+                self.emitted |= candidates
+                for word in candidates:
+                    self.words[word] = 10
+            else:
+                while candidates & self.emitted != candidates:
+                    # Keep trying until all words have been added to the
+                    # good set.
+                    self.consider_words(candidates)
 
     def load_pfile(self):
         try:
