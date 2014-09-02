@@ -69,6 +69,15 @@ There are a number of caveats to this sort of program:
 * I'm just scratching an itch here. You're welcome to do what you want
   with polly, even suggest enhancements. Just don't expect any formal
   support. (Fork away all you Github aficionados!)
+* I allow you to cheat a little. If you're having trouble generating a
+  large enough corpus or simply don't want to go the IMAP route, you
+  can use the add command to tell polly to select a number of words at
+  random from the given file. As the typical Unix words file contains
+  many not-so-common words, I included a common-words file you can use
+  for this purpose. The In fact, if you don't actually want to go to
+  the trouble of setting up the IMAP thing, just execute "add
+  common-words 2048". The common-words file contains a little more
+  than 4200 words.
 
 ## Commands
 
