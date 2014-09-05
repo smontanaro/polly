@@ -163,7 +163,7 @@ class Polly(object):
 
         if os.path.exists(self.bfile):
             with open(self.bfile) as bfile:
-                self.bad = set([w.strip() for w in bfile])
+                self.bad |= set([w.strip() for w in bfile])
 
     def save_pfile(self):
         with open(self.pfile, "wb") as pfile:
