@@ -66,12 +66,21 @@ class Polly(object):
 
     def get_password(self):
         nwords = self.options["nwords"]
+        maxchars = self.options["maxchars"]
         words = list(self.emitted)
         if len(words) > nwords and len(self.words) > nwords:
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[:nwords]]
         random.shuffle(words)
-        return " ".join(words[0:4])
+        words = [w for w in words if len(w) <= maxchars][0:4]
+        if self.options["punctuation"]:
+            other = list(self.punct) + list(" "*len(self.punct))
+            random.shuffle(other)
+            words = zip(words[:-1], other[:len(words)]) + [(words[-1], "")]
+        else:
+            words = zip(words[:-1], " " * (len(words)-1)) + [(words[-1], "")]
+        words = [x+y for (x, y) in words]
+        return "".join(words)
 
     def bad_polly(self, word):
         self.bad.add(word)
@@ -200,6 +209,8 @@ def main(args):
         "threshold": None,
         "nwords": None,
         "verbose": None,
+        "punctuation": None,
+        "maxchars": None,
         }
     getters = {
         "server": "get",
@@ -209,6 +220,8 @@ def main(args):
         "threshold": "getfloat",
         "nwords": "getint",
         "verbose": "getboolean",
+        "punctuation": "getboolean",
+        "maxchars": "getint",
         }
 
     configfile = None
@@ -252,6 +265,12 @@ def main(args):
 
         if options["nwords"] is None:
             options["nwords"] = 2048
+
+        if options["maxchars"] is None:
+            options["maxchars"] = 999
+
+        if options["punctuation"] is None:
+            options["punctuation"] = True
 
     if None in options.values():
         usage("Server, user, password and folder are all required.")
