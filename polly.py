@@ -52,6 +52,7 @@ class Polly(object):
         self.emitted = set()
         self.bad = set()
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
+        self.bfile = os.path.join(os.path.dirname(__file__), "polly.bad")
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
         self.sema = threading.Semaphore()
@@ -109,23 +110,42 @@ class Polly(object):
                     # good set.
                     self.consider_words(candidates)
 
+    def rebuild(self):
+        "Rebuild self.emitted from self.words."
+        counts = sorted([(self.words[w], w)
+                             for w in self.words if w not in self.bad])
+        nwords = self.options["nwords"]
+        threshold = int(len(counts) * (1 - self.options["threshold"]))
+        index = min(threshold, nwords)
+        words = [w for (_count, w) in counts[-index:]]
+        self.emitted = set(words)
+
     def load_pfile(self):
-        try:
-            with open(self.pfile, "rb") as pfile:
-                (self.msg_ids, self.words,
-                 self.emitted, self.bad) = pickle.load(pfile)
-        except ValueError:
-            # Assume still holds "latest".
-            with open(self.pfile, "rb") as pfile:
-                (self.msg_ids, self.words,
-                 self.emitted, _, self.bad) = pickle.load(pfile)
-        except IOError:
-            pass
+        if os.path.exists(self.pfile):
+            try:
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words,
+                     self.emitted, self.bad) = pickle.load(pfile)
+            except ValueError:
+                # Bad word list is in separate plain text file.
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words,
+                     self.emitted) = pickle.load(pfile)
+
+        if os.path.exists(self.bfile):
+            with open(self.bfile) as bfile:
+                self.bad = set([w.strip() for w in bfile])
 
     def save_pfile(self):
         with open(self.pfile, "wb") as pfile:
             pickle.dump((self.msg_ids, self.words,
-                         self.emitted, self.bad), pfile)
+                         self.emitted), pfile)
+        # Save bad words in a plain text file so we can retain them if
+        # we decide to toss the pickle file, and so we can easily edit
+        # the bad words list.
+        with open(self.bfile, "w") as bfile:
+            for word in sorted(self.bad):
+                bfile.write(word+"\n")
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
@@ -288,6 +308,9 @@ def get_commands(polly):
             elif command == "stat":
                 with polly:
                     polly.print_statistics()
+            elif command == "rebuild":
+                with polly:
+                    polly.rebuild()
             elif command == "save":
                 with polly:
                     polly.save_pfile()
@@ -304,6 +327,7 @@ def get_commands(polly):
                 print "  dict dictfile - report words not in dictfile"
                 print "  password [n] - generate one or more passwords"
                 print "  read - restart the read_imap thread if it stopped"
+                print "  rebuild - rebuild the good words from all seen"
                 print "  save - write the pickle save file"
                 print "  stat - print some simple statistics"
                 print "  verbose - toggle verbose flag"
