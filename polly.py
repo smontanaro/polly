@@ -10,17 +10,39 @@ e.g., frammitz@gmail.com. The password is the password for the given server
 on the IMAP server. The folder is the name of the folder on the IMAP server
 to monitor for mail.
 
-The config file has a single section, Polly. Within that section, each of
-the server, user, password, and folder options may be given. Two parameters
-dictate how many words will be considered to be 'common. A 'threshold'
-option may be given, a floating point number between 0 and 1 (default 0.6)
-which defines the threshold above which a word is assumed to be used
-commonly in the corpus, and can thus be used in generated passwords. This
-option may only be given in the config file. An 'nwords' option may also be
-given, which indicates the number of most common words to use when
-generating passwords. The parameter which yields the smaller number of words
-takes precedence.
+The config file has a single section, Polly. Within that section, each
+of the server, user, password, and folder options may be given
 
+Options
+-------
+
+server         - the hostname of the IMAP server (required)
+user           - the login name on the IMAP server (required)
+password       - the password for the IMAP server (required)
+folder         - the folder to check for messages (required)
+nwords         - n common words to use when considering candidates
+                 (default 2048)
+verbose        - when True, emit more messages (default False)
+punctuation    - when True, allow punctuation and digits between
+                 words (default False)
+maxchars       - length of longest word to use when generating passwords
+                 (default 999)
+
+Commands
+--------
+
+<RET>          - repeat last command
+add dictfile n - add n random words from dictfile
+bad word ...   - mark one or more words as bad
+dict dictfile  - report words not present in dictfile
+exit           - quit the program
+help or ?      - print this help
+password [n]   - generate n passwords (default 1)
+read           - read messages from the IMAP server in a second thread
+rebuild        - rebuild the 'good' words list
+save           - write the pickle save file and bad words file
+stat           - print some simple statistics about the collected words
+verbose        - toggle verbose flag
 """
 
 from ConfigParser import RawConfigParser, NoOptionError
@@ -52,6 +74,7 @@ class Polly(object):
         self.emitted = set()
         self.bad = set()
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
+        self.bfile = os.path.join(os.path.dirname(__file__), "polly.bad")
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
         self.sema = threading.Semaphore()
@@ -65,12 +88,21 @@ class Polly(object):
 
     def get_password(self):
         nwords = self.options["nwords"]
+        maxchars = self.options["maxchars"]
         words = list(self.emitted)
         if len(words) > nwords and len(self.words) > nwords:
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[:nwords]]
         random.shuffle(words)
-        return " ".join(words[0:4])
+        words = [w for w in words if len(w) <= maxchars][0:4]
+        if self.options["punctuation"]:
+            other = list(self.punct) + list(" "*len(self.punct))
+            random.shuffle(other)
+            words = zip(words[:-1], other[:len(words)]) + [(words[-1], "")]
+        else:
+            words = zip(words[:-1], " " * (len(words)-1)) + [(words[-1], "")]
+        words = [x+y for (x, y) in words]
+        return "".join(words)
 
     def bad_polly(self, word):
         self.bad.add(word)
@@ -109,30 +141,46 @@ class Polly(object):
                     # good set.
                     self.consider_words(candidates)
 
+    def rebuild(self):
+        "Rebuild self.emitted from self.words."
+        counts = sorted([(self.words[w], w)
+                             for w in self.words if w not in self.bad])
+        nwords = self.options["nwords"]
+        words = [w for (_count, w) in counts[-nwords:]]
+        self.emitted = set(words)
+
     def load_pfile(self):
-        try:
-            with open(self.pfile, "rb") as pfile:
-                (self.msg_ids, self.words,
-                 self.emitted, self.bad) = pickle.load(pfile)
-        except ValueError:
-            # Assume still holds "latest".
-            with open(self.pfile, "rb") as pfile:
-                (self.msg_ids, self.words,
-                 self.emitted, _, self.bad) = pickle.load(pfile)
-        except IOError:
-            pass
+        if os.path.exists(self.pfile):
+            try:
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words,
+                     self.emitted, self.bad) = pickle.load(pfile)
+            except ValueError:
+                # Bad word list is in separate plain text file.
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words,
+                     self.emitted) = pickle.load(pfile)
+
+        if os.path.exists(self.bfile):
+            with open(self.bfile) as bfile:
+                self.bad = set([w.strip() for w in bfile])
 
     def save_pfile(self):
         with open(self.pfile, "wb") as pfile:
             pickle.dump((self.msg_ids, self.words,
-                         self.emitted, self.bad), pfile)
+                         self.emitted), pfile)
+        # Save bad words in a plain text file so we can retain them if
+        # we decide to toss the pickle file, and so we can easily edit
+        # the bad words list.
+        with open(self.bfile, "w") as bfile:
+            for word in sorted(self.bad):
+                bfile.write(word+"\n")
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
         self.consider_words(text.split())
 
     def consider_words(self, candidates):
-        threshold = self.options["threshold"]
         for word in candidates:
             if (word in self.bad or
                 len(word) < 4 or
@@ -144,7 +192,7 @@ class Polly(object):
                 self.words[word] > 10 and
                 len(self.words) > 100):
                 counts = sorted(self.words.values())
-                min_index = threshold * len(self.words)
+                min_index = len(self.words) - self.options["nwords"]
                 if counts.index(self.words[word]) >= min_index:
                     self.emitted.add(word)
 
@@ -177,18 +225,20 @@ def main(args):
         "user": None,
         "password": None,
         "folder": None,
-        "threshold": None,
         "nwords": None,
         "verbose": None,
+        "punctuation": None,
+        "maxchars": None,
         }
     getters = {
         "server": "get",
         "user": "get",
         "password": "get",
         "folder": "get",
-        "threshold": "getfloat",
         "nwords": "getint",
         "verbose": "getboolean",
+        "punctuation": "getboolean",
+        "maxchars": "getint",
         }
 
     configfile = None
@@ -227,11 +277,14 @@ def main(args):
         if options["verbose"] is None:
             options["verbose"] = False
 
-        if options["threshold"] is None:
-            options["threshold"] = 0.6
-
         if options["nwords"] is None:
             options["nwords"] = 2048
+
+        if options["maxchars"] is None:
+            options["maxchars"] = 999
+
+        if options["punctuation"] is None:
+            options["punctuation"] = True
 
     if None in options.values():
         usage("Server, user, password and folder are all required.")
@@ -288,6 +341,9 @@ def get_commands(polly):
             elif command == "stat":
                 with polly:
                     polly.print_statistics()
+            elif command == "rebuild":
+                with polly:
+                    polly.rebuild()
             elif command == "save":
                 with polly:
                     polly.save_pfile()
@@ -298,18 +354,7 @@ def get_commands(polly):
             elif command == "exit":
                 break
             elif command in ("help", "?"):
-                print "commands:"
-                print "  add dictfile n - add n random words from dictfile"
-                print "  bad word word ... - mark one or more words as bad"
-                print "  dict dictfile - report words not in dictfile"
-                print "  password [n] - generate one or more passwords"
-                print "  read - restart the read_imap thread if it stopped"
-                print "  save - write the pickle save file"
-                print "  stat - print some simple statistics"
-                print "  verbose - toggle verbose flag"
-                print "  <RET> - repeat last command"
-                print "  help or ? - this help"
-                print "  exit - exit"
+                usage()
             else:
                 if command == "bad":
                     with polly:
