@@ -17,21 +17,30 @@ the prompt.
 
 ## Motivation
 
-I got the idea from a post by Chris Angelico to comp.lang.python:
+I got the idea from a [post by Chris Angelico to
+comp.lang.python](https://mail.python.org/pipermail/python-list/2014-August/677475.html).
+In Chris's game, Polly is a parrot who listens to the chatter of D&D players
+and spits out passwords when asked.  I thought it was an excellent idea, but
+as I don't play Dungeons & Dragons, I needed another way to build a
+dictionary of common words. It occurred to me that searching messages posted
+to public mailing lists from an IMAP server for commonly used words might
+work. I'm a Gmail user, so it was easy to create a new filter which labeled
+messages sent to a number of public mailing lists and Internet forums as
+"polly".  Instant corpus!  The polly program is pointed at the polly
+"folder" on my Gmail account and collects common words to use as the basis
+of a simple random XKCD 936 password generator.
 
-https://mail.python.org/pipermail/python-list/2014-August/677475.html
-
-In Chris's game, Polly is a parrot who listens to the chatter of D&D
-players and spits out passwords when asked.  I thought it was an
-excellent idea, but as I don't play Dungeons & Dragons, I needed
-another way to build a dictionary of common words. It occurred to me
-that searching messages posted to public mailing lists from an IMAP
-server for commonly used words might work. I'm a Gmail user, so it was
-easy to create a new filter which labeled messages sent to a number of
-public mailing lists and Internet forums as "polly".  Instant corpus!
-The polly program is pointed at the polly "folder" on my Gmail account
-and collects common words to use as the basis of a simple random XKCD
-936 password generator.
+Is this a new idea? No. It is mostly a programming exercise.  The only thing
+which might be considered unusual is the ability to choose the input set
+from which the dictionary is constructed. In my case, for example, I created
+a new label, polly, in my Gmail account. Any messages received from a number
+of public mailing lists and Internet forums related to Python, cycling and
+swimming are tagged with that label.  In that sense, the dictionary from
+which words are chosen is probably unique, containing words which are
+familiar to me, but unlikely to be found in other similar word lists like
+codepoints and chainstay.  Beyond that, it's probably not too different from
+other systems like [Diceware](http://world.std.com/~reinhold/diceware.html),
+though slightly more automated.
 
 ## Constraints
 
