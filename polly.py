@@ -211,7 +211,10 @@ class Polly(object):
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
         print "entropy:", "%.2f" % bits, "bits"
         print "'bad' words:", len(self.bad)
-        print "seen uids:", len(self.uids)
+        print "seen uids:", len(self.uids),
+        if self.uids:
+            print  min(self.uids), "->", max(self.uids),
+        print
 
     def start_reader(self):
         if self.reader is None or not self.reader.is_alive():
@@ -251,7 +254,8 @@ def main(args):
         }
 
     configfile = None
-    opts, args = getopt.getopt(args, "s:u:p:f:c:hv")
+    generate_n = 0
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:hv")
     for opt, arg in opts:
         if opt == "-u":
             options["user"] = arg
@@ -263,6 +267,8 @@ def main(args):
             options["server"] = arg
         elif opt == "-v":
             options["verbose"] = True
+        elif opt == "-g":
+            generate_n = int(arg)
         elif opt == "-c":
             configfile = arg
         elif opt == "-h":
@@ -300,6 +306,13 @@ def main(args):
         return 1
 
     polly = Polly(options)
+
+    # Just generate some passwords
+    if generate_n:
+        with polly:
+            for _ in range(generate_n):
+                print polly.get_password()
+        return 0
 
     try:
         get_commands(polly)
