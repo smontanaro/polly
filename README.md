@@ -47,7 +47,7 @@ though slightly more automated.
 * Minimum word length is four letters.
 
 * Words will not be selected if they contain any character which is not
-  a lower case letter.
+  an ASCII lower case letter.
 
 * Processing the mail is dumb. It just tries to process "words" in the text
   portions of each message it downloads.
