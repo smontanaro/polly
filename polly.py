@@ -46,6 +46,7 @@ verbose        - toggle verbose flag
 """
 
 from ConfigParser import RawConfigParser, NoOptionError
+from email.Iterators import typed_subpart_iterator
 import cPickle as pickle
 import datetime
 import email
@@ -73,6 +74,7 @@ class Polly(object):
         self.words = {}
         self.emitted = set()
         self.bad = set()
+        self.uids = set()
         self.pfile = os.path.join(os.path.dirname(__file__), "polly.pkl")
         self.bfile = os.path.join(os.path.dirname(__file__), "polly.bad")
         self.load_pfile()
@@ -178,19 +180,25 @@ class Polly(object):
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
-        self.consider_words(text.split())
+        self.consider_words(set(text.split()))
 
     def consider_words(self, candidates):
+        lowercase = set(string.ascii_lowercase)
         for word in candidates:
+            wset = set(word)
+            # Though we live in a Unicode world, I really only want stuff
+            # *I* can type as a password, so restrict words to ASCII
+            # lowercase. There's probably a more general way to accommodate
+            # the population of users who can easily type non-ASCII text,
+            # but I'll let someone else deal with that.
             if (word in self.bad or
                 len(word) < 4 or
-                set(word) & self.punct or
-                word.lower() != word):
+                wset & lowercase != wset):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
             if (word not in self.emitted and
-                self.words[word] > 10 and
-                len(self.words) > 100):
+                self.words[word] >= 10 and
+                len(self.words) >= 500):
                 counts = sorted(self.words.values())
                 min_index = len(self.words) - self.options["nwords"]
                 if counts.index(self.words[word]) >= min_index:
@@ -203,6 +211,10 @@ class Polly(object):
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
         print "entropy:", "%.2f" % bits, "bits"
         print "'bad' words:", len(self.bad)
+        print "seen uids:", len(self.uids),
+        if self.uids:
+            print  min(self.uids), "->", max(self.uids),
+        print
 
     def start_reader(self):
         if self.reader is None or not self.reader.is_alive():
@@ -242,7 +254,8 @@ def main(args):
         }
 
     configfile = None
-    opts, args = getopt.getopt(args, "s:u:p:f:c:hv")
+    generate_n = 0
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:hv")
     for opt, arg in opts:
         if opt == "-u":
             options["user"] = arg
@@ -254,6 +267,8 @@ def main(args):
             options["server"] = arg
         elif opt == "-v":
             options["verbose"] = True
+        elif opt == "-g":
+            generate_n = int(arg)
         elif opt == "-c":
             configfile = arg
         elif opt == "-h":
@@ -291,6 +306,13 @@ def main(args):
         return 1
 
     polly = Polly(options)
+
+    # Just generate some passwords
+    if generate_n:
+        with polly:
+            for _ in range(generate_n):
+                print polly.get_password()
+        return 0
 
     try:
         get_commands(polly)
@@ -389,6 +411,7 @@ def read_loop(polly):
     with polly:
         options = polly.options.copy()
         msg_ids = polly.msg_ids.copy()
+        seen_uids = polly.uids
 
     # Reference the verbose parameter through the options dict so the
     # user can toggle the setting on-the-fly.
@@ -421,12 +444,13 @@ def read_loop(polly):
                 note("failed to search for constraint: %s" % constraint)
                 return
 
-        uids = data[0].split()
+        uids = set(data[0].split()) - seen_uids
         if options["verbose"]:
             note("search successful - %d uids returned." % len(uids))
         if uids:
             note("Will process %d uids" % len(uids))
         for uid in uids:
+            seen_uids.add(uid)
             # First, check the message-id to see if we've already seen it.
             result, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
             if result != "OK":
@@ -460,8 +484,8 @@ def read_loop(polly):
                 message = email.message_from_string(data[0][1])
             except TypeError:
                 continue
-            text = get_text(message)
-            if text is None:
+            text = get_body(message)
+            if not text:
                 continue
 
             nnew += 1
@@ -496,14 +520,65 @@ class IMAP(imaplib.IMAP4_SSL):
     def __exit__(self, _type, _value, _traceback):
         self.logout()
 
-def get_text(message):
-    maintype = message.get_content_maintype()
-    if maintype == 'multipart':
-        for part in message.get_payload():
-            if part.get_content_maintype() == 'text':
-                return part.get_payload()
-    elif maintype == 'text':
-        return message.get_payload()
+# get_charset and get_body are from:
+#  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
+
+def get_charset(message, default="ascii"):
+    """Get the message charset"""
+
+    if message.get_content_charset():
+        return message.get_content_charset()
+
+    if message.get_charset():
+        return message.get_charset()
+
+    return default
+
+def get_body(message):
+    """Get the body of the email message"""
+
+    if message.is_multipart():
+        #get the plain text version only
+        text_parts = [part
+                      for part in typed_subpart_iterator(message,
+                                                         'text',
+                                                         'plain')]
+        body = []
+        for part in text_parts:
+            charset = get_charset(part, get_charset(message))
+            body.append(unicode(part.get_payload(decode=True),
+                                charset,
+                                "replace"))
+
+        return u"\n".join(body).strip()
+
+    else: # if it is not multipart, the payload will be a string
+          # representing the message body
+        body = unicode(message.get_payload(decode=True),
+                       get_charset(message),
+                       "replace")
+        return body.strip()
+
+# def get_text(message):
+#     maintype = message.get_content_maintype()
+#     if maintype == 'multipart':
+#         for part in message.get_payload():
+#             if part.get_content_maintype() == 'text':
+#                 charset = part.get_charset()
+#                 payload = part.get_payload()
+#                 if charset is not None:
+#                     note(">> %s" % charset)
+#                     return charset.to_splittable(part.get_payload())
+#                 return payload
+#     elif maintype == 'text':
+#         charset = message.get_charset()
+#         payload = message.get_payload()
+#         if charset is not None:
+#             note(">> %s" % charset)
+#             return charset.to_splittable(message.get_payload())
+#         return payload
+#     else:
+#         return ""
 
 if __name__ == "__main__":
     main(sys.argv[1:])
