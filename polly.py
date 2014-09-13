@@ -2,16 +2,16 @@
 
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
-usage: %(PROG)s -s server -u user -p password -f folder [ -c config ]
+usage: %(PROG)s -s server -u user -p password -f folder [ -g N ] [ -c config ]
 
-All command line flags are required unless they are specified in the config
-file. The server is the IMAP server to use.  The user is the IMAP user,
-e.g., frammitz@gmail.com. The password is the password for the given server
-on the IMAP server. The folder is the name of the folder on the IMAP server
-to monitor for mail.
+The server, user, password and folder flags are required unless they are
+specified in the config file.  If the -g flag is given, polly will print N
+passwords, then exit without starting a command loop. If the -c flag is
+given, options are read from the named config file. The -s, -u, -p, and -f
+flags take precedence over the values defined in the config file.
 
-The config file has a single section, Polly. Within that section, each
-of the server, user, password, and folder options may be given
+The config file has a single section, Polly. Within that section, any of the
+following options may be defined.
 
 Options
 -------
@@ -27,11 +27,11 @@ punctuation    - when True, allow punctuation and digits between
                  words (default False)
 maxchars       - length of longest word to use when generating passwords
                  (default 999)
+edit-mode      - editor mode for readline (default 'emacs')
 
 Commands
 --------
 
-<RET>          - repeat last command
 add dictfile n - add n random words from dictfile
 bad word ...   - mark one or more words as bad
 dict dictfile  - report words not present in dictfile
@@ -43,6 +43,8 @@ rebuild        - rebuild the 'good' words list
 save           - write the pickle save file and bad words file
 stat           - print some simple statistics about the collected words
 verbose        - toggle verbose flag
+
+Readline support is enabled, with input history saved in ~/.polly.rc.
 """
 
 from ConfigParser import RawConfigParser, NoOptionError
@@ -60,6 +62,10 @@ import sys
 import textwrap
 import threading
 import time
+import readline
+import rlcompleter
+import atexit
+
 import dateutil.parser
 
 PROG = os.path.split(sys.argv[0])[1]
@@ -241,6 +247,7 @@ def main(args):
         "verbose": None,
         "punctuation": None,
         "maxchars": None,
+        "editing-mode": None,
         }
     getters = {
         "server": "get",
@@ -251,6 +258,7 @@ def main(args):
         "verbose": "getboolean",
         "punctuation": "getboolean",
         "maxchars": "getint",
+        "editing-mode": "get",
         }
 
     configfile = None
@@ -301,6 +309,9 @@ def main(args):
         if options["punctuation"] is None:
             options["punctuation"] = True
 
+        if options["editing-mode"] is None:
+            options["editing-mode"] = "emacs"
+
     if None in options.values():
         usage("Server, user, password and folder are all required.")
         return 1
@@ -314,6 +325,15 @@ def main(args):
                 print polly.get_password()
         return 0
 
+    readline.parse_and_bind('tab: complete')
+    readline.parse_and_bind('set editing-mode %s' % options["editing-mode"])
+    histfile = os.path.expanduser('~/.polly.rc')
+    try:
+        readline.read_history_file(histfile)
+    except IOError:
+        pass
+    atexit.register(readline.write_history_file, histfile)
+
     try:
         get_commands(polly)
     except KeyboardInterrupt:
@@ -325,21 +345,14 @@ def main(args):
 
 def get_commands(polly):
     try:
-        last_command = None
         while True:
-            sys.stdout.write("? ")
-            sys.stdout.flush()
-            command = sys.stdin.readline()
-            if not command:
+            try:
+                command = raw_input("? ")
+            except EOFError:
                 break
             command = command.strip()
             if not command:
-                # repeat last command
-                if last_command is None:
-                    print "No last command to repeat!"
-                    continue
-                command = last_command
-            last_command = command
+                continue
             try:
                 command, rest = command.split(None, 1)
             except ValueError:

@@ -1,23 +1,7 @@
 There will always be things to do...
 
-* Access IMAP server messages more efficiently (maybe peek at headers and
-  only pull the full message if we've not yet seen the message-id?
-
-(done)
-
-* readline/history support for the interactive prompt
-
-* optional count arg for the password command (generate that many at one go)
-
-(done)
-
-* Beef up words file cheaply.
-
-(done)
-
-* Bad words should be remembered separately from the normal pickle so it can
-  be retained across deletions of the pickle. Also, should be plain text to
-  allow easy editing.
+Stuff To Do
+===========
 
 * Should get message ids all at once (how?), then quickly discard all we've
   seen.
@@ -26,4 +10,20 @@ There will always be things to do...
   sure how that whole thing is supposed to work. Ideally, you'd process the
   entire folder the first time around, then "RECENT" messages after
   that. I'm sure the current scheme would be hard on lesser IMAP servers.
+
+Completed Items
+===============
+
+* Access IMAP server messages more efficiently (maybe peek at headers and
+  only pull the full message if we've not yet seen the message-id?
+
+* Bad words should be remembered separately from the normal pickle so it can
+  be retained across deletions of the pickle. Also, should be plain text to
+  allow easy editing.
+
+* readline/history support for the interactive prompt
+
+* optional count arg for the password command (generate that many at one go)
+
+* Beef up words file cheaply.
 

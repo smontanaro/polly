@@ -122,4 +122,5 @@ There are a number of caveats to this sort of program:
 
 * verbose        - toggle verbose flag
 
-A bare RETURN repeats the previous command (if there was one).
+Readline support is enabled. The default editing mode is emacs. You can set
+the edit-mode option in the config file to select vi.
