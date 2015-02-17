@@ -28,6 +28,7 @@ punctuation    - when True, allow punctuation and digits between
 maxchars       - length of longest word to use when generating passwords
                  (default 999)
 edit-mode      - editor mode for readline (default 'emacs')
+length         - number of words used to construct passwords (default 4)
 
 Commands
 --------
@@ -95,6 +96,7 @@ class Polly(object):
         self.sema.release()
 
     def get_password(self):
+        length = self.options["length"]
         nwords = self.options["nwords"]
         maxchars = self.options["maxchars"]
         words = list(self.emitted)
@@ -102,7 +104,7 @@ class Polly(object):
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[:nwords]]
         random.shuffle(words)
-        words = [w for w in words if len(w) <= maxchars][0:4]
+        words = [w for w in words if len(w) <= maxchars][0:length]
         if self.options["punctuation"]:
             other = list(self.punct) + list(" "*len(self.punct))
             random.shuffle(other)
@@ -243,6 +245,7 @@ def main(args):
         "user": None,
         "password": None,
         "folder": None,
+        "length": None,
         "nwords": None,
         "verbose": None,
         "punctuation": None,
@@ -254,6 +257,7 @@ def main(args):
         "user": "get",
         "password": "get",
         "folder": "get",
+        "length": "getint",
         "nwords": "getint",
         "verbose": "getboolean",
         "punctuation": "getboolean",
@@ -299,6 +303,9 @@ def main(args):
         # These can legitimately be unspecified.
         if options["verbose"] is None:
             options["verbose"] = False
+
+        if options["length"] is None:
+            options["length"] = 4
 
         if options["nwords"] is None:
             options["nwords"] = 2048
