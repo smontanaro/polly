@@ -1,5 +1,4 @@
 *~
-*.cfg
 *.save
 
 # Byte-compiled / optimized / DLL files
@@ -55,4 +54,3 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
-
