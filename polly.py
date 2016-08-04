@@ -125,14 +125,15 @@ class Polly(object):
         # Randomize the selected words a bit.
         self.tweak(words)
 
-        # Interleave punctuation if required.
         if self.options["punctuation"]:
+            # Interleave punctuation if required.
             punct = list(self.punct)
             for i in range(len(words)-1, 0, -1):
                 random.shuffle(punct)
                 words[i:i] = punct[0]
             words = "".join(words)
         else:
+            # Otherwise, just use spaces.
             words = " ".join(words)
         return words
 
