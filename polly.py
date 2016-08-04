@@ -25,6 +25,8 @@ nwords         - n common words to use when considering candidates
 verbose        - when True, emit more messages (default False)
 punctuation    - when True, allow punctuation and digits between
                  words (default False)
+minchars       - length of shortest word to use when generating passwords
+                 (default 3)
 maxchars       - length of longest word to use when generating passwords
                  (default 999)
 edit-mode      - editor mode for readline (default 'emacs')
@@ -87,6 +89,8 @@ class Polly(object):
         self.load_pfile()
         # Workers will acquire/release Polly to operate on internal data.
         self.sema = threading.Semaphore()
+        # Words already used in a password on this run.
+        self.used = set()
 
     def __enter__(self):
         self.sema.acquire()
@@ -98,21 +102,58 @@ class Polly(object):
     def get_password(self):
         length = self.options["length"]
         nwords = self.options["nwords"]
+        minchars = self.options["minchars"]
         maxchars = self.options["maxchars"]
+
+        # List of words to choose from.
         words = list(self.emitted)
+
         if len(words) > nwords and len(self.words) > nwords:
+            # Choose from the nwords most common words in the database.
             counts = sorted(zip(self.words.values(), self.words.keys()))
-            words = [w for (_count, w) in counts[:nwords]]
+            words = [w for (_count, w) in counts[-nwords:]]
+
         random.shuffle(words)
-        words = [w for w in words if len(w) <= maxchars][0:length]
+        # Select the first length unused words from the shuffled list.
+        words = [w for w in words
+                   if minchars <= len(w) <= maxchars and
+                      w not in self.used]
+        words = words[0:length]
+
+        # Remember that we used them.
+        self.used |= set(words)
+        # Randomize the selected words a bit.
+        self.tweak(words)
+
+        # Interleave punctuation if required.
         if self.options["punctuation"]:
-            other = list(self.punct) + list(" "*len(self.punct))
-            random.shuffle(other)
-            words = zip(words[:-1], other[:len(words)]) + [(words[-1], "")]
+            punct = list(self.punct)
+            for i in range(len(words)-1, 0, -1):
+                random.shuffle(punct)
+                words[i:i] = punct[0]
+            words = "".join(words)
         else:
-            words = zip(words[:-1], " " * (len(words)-1)) + [(words[-1], "")]
-        words = [x+y for (x, y) in words]
-        return "".join(words)
+            words = " ".join(words)
+        return words
+
+    def tweak(self, words):
+        """Randomize the individual words a bit.
+
+        With small probability, convert individual letters to uppercase.
+        With even smaller probability, insert punctuation.
+        Probability of tweakage goes up as the number of words is reduced.
+        """
+        length = len(words)
+        for i in range(len(words)):
+            word = list(words[i])
+            for j in range(len(word) - 1, -1, -1):
+                if random.random() < 0.2 / length:
+                    word[j] = word[j].upper()
+                if random.random() < 0.08 / length:
+                    punct = list(self.punct)
+                    random.shuffle(punct)
+                    word[j:j] = punct[0]
+            words[i] = "".join(word)
 
     def bad_polly(self, word):
         self.bad.add(word)
@@ -161,15 +202,9 @@ class Polly(object):
 
     def load_pfile(self):
         if os.path.exists(self.pfile):
-            try:
-                with open(self.pfile, "rb") as pfile:
-                    (self.msg_ids, self.words,
-                     self.emitted, self.bad) = pickle.load(pfile)
-            except ValueError:
-                # Bad word list is in separate plain text file.
-                with open(self.pfile, "rb") as pfile:
-                    (self.msg_ids, self.words,
-                     self.emitted) = pickle.load(pfile)
+            # Bad word list is in separate plain text file.
+            with open(self.pfile, "rb") as pfile:
+                (self.msg_ids, self.words, self.emitted) = pickle.load(pfile)
 
         if os.path.exists(self.bfile):
             with open(self.bfile) as bfile:
@@ -177,8 +212,7 @@ class Polly(object):
 
     def save_pfile(self):
         with open(self.pfile, "wb") as pfile:
-            pickle.dump((self.msg_ids, self.words,
-                         self.emitted), pfile)
+            pickle.dump((self.msg_ids, self.words, self.emitted), pfile)
         # Save bad words in a plain text file so we can retain them if
         # we decide to toss the pickle file, and so we can easily edit
         # the bad words list.
@@ -249,6 +283,7 @@ def main(args):
         "nwords": None,
         "verbose": None,
         "punctuation": None,
+        "minchars": None,
         "maxchars": None,
         "editing-mode": None,
         }
@@ -261,6 +296,7 @@ def main(args):
         "nwords": "getint",
         "verbose": "getboolean",
         "punctuation": "getboolean",
+        "minchars": "getint",
         "maxchars": "getint",
         "editing-mode": "get",
         }
@@ -312,6 +348,9 @@ def main(args):
 
         if options["maxchars"] is None:
             options["maxchars"] = 999
+
+        if options["minchars"] is None:
+            options["minchars"] = 3
 
         if options["punctuation"] is None:
             options["punctuation"] = True
