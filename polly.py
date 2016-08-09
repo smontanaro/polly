@@ -2,13 +2,19 @@
 
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
-usage: %(PROG)s -s server -u user -p password -f folder [ -g N ] [ -c config ]
+usage: %(PROG)s -s server -u user -p password -f folder [ -g N [ -H what ] ] \
+        [ -c config ]
 
-The server, user, password and folder flags are required unless they are
-specified in the config file.  If the -g flag is given, polly will print N
-passwords, then exit without starting a command loop. If the -c flag is
-given, options are read from the named config file. The -s, -u, -p, and -f
-flags take precedence over the values defined in the config file.
+The server, user, password and folder flags are required unless they
+are specified in the config file.  If the -g flag is given, polly will
+print N passwords, then exit without starting a command loop. If the
+-c flag is given, options are read from the named config file. The -s,
+-u, -p, and -f flags take precedence over the values defined in the
+config file.
+
+When generating passwords, you can specify that they are to be hashed
+using the -H flag. You must also give the type of hash to use. Any
+hash type in Python's hashlib.algorithm tuple is acceptable.
 
 The config file has a single section, Polly. Within that section, any of the
 following options may be defined.
@@ -31,6 +37,8 @@ maxchars       - length of longest word to use when generating passwords
                  (default 999)
 edit-mode      - editor mode for readline (default 'emacs')
 length         - number of words used to construct passwords (default 4)
+hash           - emit hashes of the specified type instead of plain text
+                 passwords (for strength testing)
 
 Commands
 --------
@@ -68,6 +76,7 @@ import time
 import readline
 import rlcompleter
 import atexit
+import hashlib
 
 import dateutil.parser
 
@@ -287,6 +296,7 @@ def main(args):
         "minchars": None,
         "maxchars": None,
         "editing-mode": None,
+        "hash": None,
         }
     getters = {
         "server": "get",
@@ -300,11 +310,12 @@ def main(args):
         "minchars": "getint",
         "maxchars": "getint",
         "editing-mode": "get",
+        "hash": "get",
         }
 
     configfile = None
     generate_n = 0
-    opts, args = getopt.getopt(args, "s:u:p:f:c:g:hv")
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:H:hv")
     for opt, arg in opts:
         if opt == "-u":
             options["user"] = arg
@@ -320,6 +331,11 @@ def main(args):
             generate_n = int(arg)
         elif opt == "-c":
             configfile = arg
+        elif opt == "-H":
+            if arg not in hashlib.algorithms:
+                usage("hash type %s not known to Python's hashlib module." % arg)
+                return 99
+            options["hash"] = arg
         elif opt == "-h":
             usage()
             return 0
@@ -367,9 +383,14 @@ def main(args):
 
     # Just generate some passwords
     if generate_n:
+        if options["hash"] is not None:
+            def encrypt(p):
+                return hashlib.new(options["hash"], p).hexdigest()
+        else:
+            encrypt = lambda x: x
         with polly:
             for _ in range(generate_n):
-                print polly.get_password()
+                print encrypt(polly.get_password())
         return 0
 
     readline.parse_and_bind('tab: complete')
