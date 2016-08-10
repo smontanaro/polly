@@ -1,4 +1,5 @@
 *~
+*.cfg
 *.save
 
 # Byte-compiled / optimized / DLL files
