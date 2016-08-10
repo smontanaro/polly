@@ -375,6 +375,9 @@ def main(args):
         if options["editing-mode"] is None:
             options["editing-mode"] = "emacs"
 
+        if options["hash"] is None:
+            options["hash"] = ""
+
     if None in options.values():
         usage("Server, user, password and folder are all required.")
         return 1
@@ -383,7 +386,7 @@ def main(args):
 
     # Just generate some passwords
     if generate_n:
-        if options["hash"] is not None:
+        if options["hash"]:
             def encrypt(p):
                 return hashlib.new(options["hash"], p).hexdigest()
         else:
