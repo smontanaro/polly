@@ -1,8 +1,8 @@
 # Polly
 
-Note: I developed this for my personal use. Do not use it unless you
+** Note: I developed this for my personal use. Do not use it unless you
 understand the ramifications of using security software which almost
-certainly has bugs which black hats could exploit.
+certainly has bugs which black hats could exploit. **
 
 Build a corpus of common words from messages in an IMAP folder then
 use that to generate XKCD936-style passwords.
