@@ -100,6 +100,8 @@ class Polly(object):
         self.sema = threading.Semaphore()
         # Words already used in a password on this run.
         self.used = set()
+        # Cryptographically secure random number generator.
+        self.cr = random.SystemRandom()
 
     def __enter__(self):
         self.sema.acquire()
@@ -122,7 +124,7 @@ class Polly(object):
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[-nwords:]]
 
-        random.shuffle(words)
+        self.cr.shuffle(words)
         # Select the first length unused words from the shuffled list.
         words = [w for w in words
                    if minchars <= len(w) <= maxchars and
@@ -138,7 +140,7 @@ class Polly(object):
             # Interleave punctuation if required.
             punct = list(self.punct)
             for i in range(len(words)-1, 0, -1):
-                random.shuffle(punct)
+                self.cr.shuffle(punct)
                 words[i:i] = punct[0]
             words = "".join(words)
         else:
@@ -157,11 +159,11 @@ class Polly(object):
         for i in range(len(words)):
             word = list(words[i])
             for j in range(len(word) - 1, -1, -1):
-                if random.random() < 0.2 / length:
+                if self.cr.random() < 0.2 / length:
                     word[j] = word[j].upper()
-                if random.random() < 0.08 / length:
+                if self.cr.random() < 0.08 / length:
                     punct = list(self.punct)
-                    random.shuffle(punct)
+                    self.cr.shuffle(punct)
                     word[j:j] = punct[0]
             words[i] = "".join(word)
 
@@ -189,7 +191,7 @@ class Polly(object):
             raw = [w.strip()
                      for w in dictfp
                        if (not set(w) & upper_and_punct) and len(w) > 4]
-            random.shuffle(raw)
+            self.cr.shuffle(raw)
             candidates = set(raw[:nwords])
             if not self.emitted:
                 # Cheat. Just initialize from the candidates.
@@ -333,7 +335,8 @@ def main(args):
             configfile = arg
         elif opt == "-H":
             if arg not in hashlib.algorithms:
-                usage("hash type %s not known to Python's hashlib module." % arg)
+                usage("hash type %s not known to Python's"
+                      " hashlib module." % arg)
                 return 99
             options["hash"] = arg
         elif opt == "-h":
