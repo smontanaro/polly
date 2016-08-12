@@ -1,8 +1,8 @@
 # Polly
 
-** Note: I developed this for my personal use. Do not use it unless you
+**Note: I developed this for my personal use. Do not use it unless you
 understand the ramifications of using security software which almost
-certainly has bugs which black hats could exploit. **
+certainly has bugs which black hats could exploit.**
 
 Build a corpus of common words from messages in an IMAP folder then
 use that to generate XKCD936-style passwords.
@@ -32,19 +32,29 @@ work. I'm a Gmail user, so it was easy to create a new filter which labeled
 messages sent to a number of public mailing lists and Internet forums as
 "polly".  Instant corpus!  The polly program is pointed at the polly
 "folder" on my Gmail account and collects common words to use as the basis
-of a simple random XKCD 936 password generator.
+of a modified XKCD 936 passphrase generator.
 
-Is this a new idea? No. It is mostly a programming exercise.  The only thing
-which might be considered unusual is the ability to choose the input set
-from which the dictionary is constructed. In my case, for example, I created
-a new label, polly, in my Gmail account. Any messages received from a number
-of public mailing lists and Internet forums related to Python, cycling and
-swimming are tagged with that label.  In that sense, the dictionary from
-which words are chosen is probably unique, containing words which are
-familiar to me, but unlikely to be found in other similar word lists like
-codepoints and chainstay.  Beyond that, it's probably not too different from
-other systems like [Diceware](http://world.std.com/~reinhold/diceware.html),
-though slightly more automated.
+Is this a new idea? No. It is mostly a programming exercise. Any messages
+received from a number of public mailing lists and Internet forums related
+to Python, cycling and swimming are tagged with that label.  In that sense,
+the dictionary from which words are chosen is probably unique, containing
+words which are familiar to me, but unlikely to be found in other similar
+word lists like "codepoints" and "chainstay."  Beyond that, it's probably
+not too different from other systems like
+[Diceware](http://world.std.com/~reinhold/diceware.html), though slightly
+more automated.
+
+## Basic idea
+
+1. Choose a set of four random words from the dictionary (basic XKCD 936
+   passphrase). For example: `correct horse battery staple`.
+2. Separate the words using punctuation or digits. For example: `correct!horse^battery5staple`.
+3. Upshift individual letters in the words (with low probability). For example: `corRect!horsE^battery5Staple`.
+4. Insert punctuation or digits between letters (with even lower
+   probability). For example: `corRec3t!horsE^bat_tery5Staple`.
+
+Most of the above tweaks to the basic passphrase generator can be controlled
+by the user in the config file.
 
 ## Constraints
 
