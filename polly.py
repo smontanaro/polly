@@ -37,8 +37,8 @@ maxchars       - length of longest word to use when generating passwords
                  (default 999)
 edit-mode      - editor mode for readline (default 'emacs')
 length         - number of words used to construct passwords (default 4)
-hash           - emit hashes of the specified type instead of plain text
-                 passwords (for strength testing)
+hash           - emit passwords using $dummy$hex instead of plain text
+                 passwords (for strength testing using JohnTheRipper)
 
 Commands
 --------
@@ -76,7 +76,7 @@ import time
 import readline
 import rlcompleter
 import atexit
-import hashlib
+import binascii
 
 import dateutil.parser
 
@@ -312,12 +312,12 @@ def main(args):
         "minchars": "getint",
         "maxchars": "getint",
         "editing-mode": "get",
-        "hash": "get",
+        "hash": "getboolean",
         }
 
     configfile = None
     generate_n = 0
-    opts, args = getopt.getopt(args, "s:u:p:f:c:g:H:hv")
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:Hhv")
     for opt, arg in opts:
         if opt == "-u":
             options["user"] = arg
@@ -334,11 +334,7 @@ def main(args):
         elif opt == "-c":
             configfile = arg
         elif opt == "-H":
-            if arg not in hashlib.algorithms:
-                usage("hash type %s not known to Python's"
-                      " hashlib module." % arg)
-                return 99
-            options["hash"] = arg
+            options["hash"] = True
         elif opt == "-h":
             usage()
             return 0
@@ -379,7 +375,7 @@ def main(args):
             options["editing-mode"] = "emacs"
 
         if options["hash"] is None:
-            options["hash"] = ""
+            options["hash"] = False
 
     if None in options.values():
         usage("Server, user, password and folder are all required.")
@@ -391,7 +387,7 @@ def main(args):
     if generate_n:
         if options["hash"]:
             def encrypt(p):
-                return hashlib.new(options["hash"], p).hexdigest()
+                return "$dummy$" + binascii.hexlify(p)
         else:
             encrypt = lambda x: x
         with polly:
