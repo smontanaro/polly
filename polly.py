@@ -3,7 +3,7 @@
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
 usage: %(PROG)s -s server -u user -p password -f folder [ -g N [ -H what ] ] \
-        [ -c config ]
+        [ -G | --gui ] [ -c config ]
 
 The server, user, password and folder flags are required unless they
 are specified in the config file.  If the -g flag is given, polly will
@@ -11,6 +11,8 @@ print N passwords, then exit without starting a command loop. If the
 -c flag is given, options are read from the named config file. The -s,
 -u, -p, and -f flags take precedence over the values defined in the
 config file.
+
+When run with the -G or --gui flag, a graphical user interface is started.
 
 When generating passwords, you can specify that they are to be hashed
 using the -H flag. You must also give the type of hash to use. Any
@@ -77,6 +79,9 @@ import readline
 import rlcompleter
 import atexit
 import binascii
+import subprocess
+import Tkinter as tkinter
+import ttk
 
 import dateutil.parser
 
@@ -317,7 +322,8 @@ def main(args):
 
     configfile = None
     generate_n = 0
-    opts, args = getopt.getopt(args, "s:u:p:f:c:g:Hhv")
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:HhvG",
+                               ["gui", "help"])
     for opt, arg in opts:
         if opt == "-u":
             options["user"] = arg
@@ -331,11 +337,14 @@ def main(args):
             options["verbose"] = True
         elif opt == "-g":
             generate_n = int(arg)
+        elif opt in ("-G", "--gui"):
+            run_gui(args)
+            return 0
         elif opt == "-c":
             configfile = arg
         elif opt == "-H":
             options["hash"] = True
-        elif opt == "-h":
+        elif opt in ("-h", "--help"):
             usage()
             return 0
 
@@ -592,6 +601,49 @@ def read_loop(polly):
                     msg_date = DFLT_DATE
 
         note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
+
+def run_gui(args):
+    # Re-run as a subprocess which we will talk to, need to run it
+    # without the gui though.
+    args = args[:]
+    for garg in ("-G", "--gui"):
+        while garg in args:
+            args.remove(garg)
+    args = ["python", sys.argv[0]] + args
+    pipe = subprocess.Popen(args, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, bufsize=1)
+    root = tkinter.Tk()
+    app = Application(pipe, master=root)
+    app.mainloop()
+    root.destroy()
+    pipe.kill()
+
+class Application(tkinter.Frame):
+    def __init__(self, pipe, master=None):
+        tkinter.Frame.__init__(self, master)
+        self.pipe = pipe
+        self.pack()
+        self.create_widgets()
+
+    def run_command(self):
+        print ">>", self.entry.get(), "->",
+        print >> self.pipe.stdin, self.entry.get().strip()
+        self.pipe.stdin.flush()
+        print self.pipe.stdout.readline()
+
+    def handle_key(self, event):
+        if event.char == "\r":
+            self.run_command()
+
+    def create_widgets(self):
+        self.entry = tkinter.Entry(self)
+        self.entry.pack(side=tkinter.TOP)
+        self.entry.bind("<Key>", self.handle_key)
+
+        self.exit = tkinter.Button(self)
+        self.exit["text"] = "Quit"
+        self.exit.pack(side=tkinter.TOP)
+        self.exit["command"] = self.quit
 
 class IMAP(imaplib.IMAP4_SSL):
     def __init__(self, server):
