@@ -76,12 +76,10 @@ import textwrap
 import threading
 import time
 import readline
-import rlcompleter
 import atexit
 import binascii
 import subprocess
 import Tkinter as tkinter
-import ttk
 
 import dateutil.parser
 
@@ -304,11 +302,14 @@ def main(args):
         "maxchars": None,
         "editing-mode": None,
         "hash": None,
+        "prompt": None,
+        "gui": None,
         }
     getters = {
         "server": "get",
         "user": "get",
         "password": "get",
+        "prompt": "get",
         "folder": "get",
         "length": "getint",
         "nwords": "getint",
@@ -318,11 +319,13 @@ def main(args):
         "maxchars": "getint",
         "editing-mode": "get",
         "hash": "getboolean",
+        "gui": "getboolean",
         }
 
     configfile = None
     generate_n = 0
-    opts, args = getopt.getopt(args, "s:u:p:f:c:g:HhvG",
+    all_args = args[:]
+    opts, args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
                                ["gui", "help"])
     for opt, arg in opts:
         if opt == "-u":
@@ -337,8 +340,11 @@ def main(args):
             options["verbose"] = True
         elif opt == "-g":
             generate_n = int(arg)
+        elif opt == "-n":
+            options["prompt"] = False
         elif opt in ("-G", "--gui"):
-            run_gui(args)
+            options["gui"] = True
+            run_gui(all_args)
             return 0
         elif opt == "-c":
             configfile = arg
@@ -386,9 +392,15 @@ def main(args):
         if options["hash"] is None:
             options["hash"] = False
 
-    if None in options.values():
-        usage("Server, user, password and folder are all required.")
-        return 1
+        if options["prompt"] is None:
+            options["prompt"] = True
+
+        if options["gui"] is None:
+            options["gui"] = False
+
+    # if None in options.values():
+    #     usage("Server, user, password and folder are all required.")
+    #     return 1
 
     polly = Polly(options)
 
@@ -418,15 +430,17 @@ def main(args):
     except KeyboardInterrupt:
         pass
     finally:
-        polly.save_pfile()
+        if not options["gui"]:
+            polly.save_pfile()
 
     return 0
 
 def get_commands(polly):
     try:
         while True:
+            prompt = "? " if polly.options["prompt"] else ""
             try:
-                command = raw_input("? ")
+                command = raw_input(prompt)
             except EOFError:
                 break
             command = command.strip()
@@ -448,7 +462,10 @@ def get_commands(polly):
                         polly.options["verbose"]):
                         note("Using %d most common words." % nwords)
                     for _ in range(count):
-                        print polly.get_password()
+                        passwd = polly.get_password()
+                        print >> sys.stderr, repr(passwd)
+                        sys.stdout.write(passwd+"\n")
+                        sys.stdout.flush()
             elif command == "read":
                 with polly:
                     polly.start_reader()
@@ -605,11 +622,10 @@ def read_loop(polly):
 def run_gui(args):
     # Re-run as a subprocess which we will talk to, need to run it
     # without the gui though.
-    args = args[:]
     for garg in ("-G", "--gui"):
         while garg in args:
             args.remove(garg)
-    args = ["python", sys.argv[0]] + args
+    args = ["python", sys.argv[0], "-n"] + args
     pipe = subprocess.Popen(args, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, bufsize=1)
     root = tkinter.Tk()
