@@ -154,17 +154,17 @@ class Polly(object):
     def tweak(self, words):
         """Randomize the individual words a bit.
 
-        With small probability, convert individual letters to uppercase.
-        With even smaller probability, insert punctuation.
         Probability of tweakage goes up as the number of words is reduced.
         """
         length = len(words)
-        for i in range(len(words)):
+        for (i, word) in enumerate(words):
             word = list(words[i])
             for j in range(len(word) - 1, -1, -1):
-                if self.cr.random() < 0.2 / length:
+                # 20% chance to convert a letter to upper case.
+                if self.cr.random() < 0.4 / length:
                     word[j] = word[j].upper()
-                if self.cr.random() < 0.08 / length:
+                # 10% chance to insert puntuation or digit between letters.
+                if self.cr.random() < 0.2 / length:
                     punct = list(self.punct)
                     self.cr.shuffle(punct)
                     word[j:j] = punct[0]
