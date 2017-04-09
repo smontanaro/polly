@@ -60,9 +60,9 @@ verbose        - toggle verbose flag
 Readline support is enabled, with input history saved in ~/.polly.rc.
 """
 
-from ConfigParser import RawConfigParser, NoOptionError
-from email.Iterators import typed_subpart_iterator
-import cPickle as pickle
+from configparser import RawConfigParser, NoOptionError
+from email.iterators import typed_subpart_iterator
+import pickle as pickle
 import datetime
 import email
 import getopt
@@ -79,7 +79,7 @@ import readline
 import atexit
 import binascii
 import subprocess
-import Tkinter as tkinter
+import tkinter as tkinter
 
 import dateutil.parser
 
@@ -124,7 +124,7 @@ class Polly(object):
 
         if len(words) > nwords and len(self.words) > nwords:
             # Choose from the nwords most common words in the database.
-            counts = sorted(zip(self.words.values(), self.words.keys()))
+            counts = sorted(zip(list(self.words.values()), list(self.words.keys())))
             words = [w for (_count, w) in counts[-nwords:]]
 
         self.cr.shuffle(words)
@@ -262,16 +262,16 @@ class Polly(object):
                     self.emitted.add(word)
 
     def print_statistics(self):
-        print "message ids:", len(self.msg_ids)
-        print "all words:", len(self.words)
-        print "common words:", len(self.emitted),
+        print("message ids:", len(self.msg_ids))
+        print("all words:", len(self.words))
+        print("common words:", len(self.emitted), end=' ')
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
-        print "entropy:", "%.2f" % bits, "bits"
-        print "'bad' words:", len(self.bad)
-        print "seen uids:", len(self.uids),
+        print("entropy:", "%.2f" % bits, "bits")
+        print("'bad' words:", len(self.bad))
+        print("seen uids:", len(self.uids), end=' ')
         if self.uids:
-            print  min(self.uids), "->", max(self.uids),
-        print
+            print(min(self.uids), "->", max(self.uids), end=' ')
+        print()
 
     def start_reader(self):
         if self.reader is None or not self.reader.is_alive():
@@ -284,9 +284,9 @@ class Polly(object):
 
 def usage(msg=""):
     if msg:
-        print >> sys.stderr, msg
-        print >> sys.stderr
-    print >> sys.stderr, __doc__ % globals()
+        print(msg, file=sys.stderr)
+        print(file=sys.stderr)
+    print(__doc__ % globals(), file=sys.stderr)
 
 def main(args):
     options = {
@@ -413,7 +413,7 @@ def main(args):
             encrypt = lambda x: x
         with polly:
             for _ in range(generate_n):
-                print encrypt(polly.get_password())
+                print(encrypt(polly.get_password()))
         return 0
 
     readline.parse_and_bind('tab: complete')
@@ -440,7 +440,7 @@ def get_commands(polly):
         while True:
             prompt = "? " if polly.options["prompt"] else ""
             try:
-                command = raw_input(prompt)
+                command = input(prompt)
             except EOFError:
                 break
             command = command.strip()
@@ -463,7 +463,7 @@ def get_commands(polly):
                         note("Using %d most common words." % nwords)
                     for _ in range(count):
                         passwd = polly.get_password()
-                        print >> sys.stderr, repr(passwd)
+                        print(repr(passwd), file=sys.stderr)
                         sys.stdout.write(passwd+"\n")
                         sys.stdout.flush()
             elif command == "read":
@@ -481,7 +481,7 @@ def get_commands(polly):
             elif command == "verbose":
                 with polly:
                     polly.options["verbose"] = not polly.options["verbose"]
-                    print "verbose:", polly.options["verbose"]
+                    print("verbose:", polly.options["verbose"])
             elif command == "exit":
                 break
             elif command in ("help", "?"):
@@ -494,7 +494,7 @@ def get_commands(polly):
                 elif command == "dict":
                     with polly:
                         not_really_words = " ".join(polly.get_not_words(rest))
-                        print textwrap.fill(not_really_words)
+                        print(textwrap.fill(not_really_words))
                 elif command == "add":
                     with polly:
                         dictfile, nwords = rest.split()
@@ -642,10 +642,10 @@ class Application(tkinter.Frame):
         self.create_widgets()
 
     def run_command(self):
-        print ">>", self.entry.get(), "->",
-        print >> self.pipe.stdin, self.entry.get().strip()
+        print(">>", self.entry.get(), "->", end=' ')
+        print(self.entry.get().strip(), file=self.pipe.stdin)
         self.pipe.stdin.flush()
-        print self.pipe.stdout.readline()
+        print(self.pipe.stdout.readline())
 
     def handle_key(self, event):
         if event.char == "\r":
@@ -697,15 +697,15 @@ def get_body(message):
         body = []
         for part in text_parts:
             charset = get_charset(part, get_charset(message))
-            body.append(unicode(part.get_payload(decode=True),
+            body.append(str(part.get_payload(decode=True),
                                 charset,
                                 "replace"))
 
-        return u"\n".join(body).strip()
+        return "\n".join(body).strip()
 
     else: # if it is not multipart, the payload will be a string
           # representing the message body
-        body = unicode(message.get_payload(decode=True),
+        body = str(message.get_payload(decode=True),
                        get_charset(message),
                        "replace")
         return body.strip()
