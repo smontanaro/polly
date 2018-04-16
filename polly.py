@@ -31,8 +31,8 @@ folder         - the folder to check for messages (required)
 nwords         - n common words to use when considering candidates
                  (default 2048)
 verbose        - when True, emit more messages (default False)
-punctuation    - when True, allow punctuation and digits between
-                 words (default False)
+punctuation    - when True, allow punctuation between words (default False)
+digits         - when True, allow digits between words (default False)
 minchars       - length of shortest word to use when generating passwords
                  (default 3)
 maxchars       - length of longest word to use when generating passwords
@@ -90,7 +90,8 @@ class Polly(object):
     def __init__(self, options):
         self.reader = None
         self.options = options
-        self.punct = set(string.punctuation+string.digits)
+        self.punct = set(string.punctuation)
+        self.digits = set(string.digits)
         self.msg_ids = set()
         self.words = {}
         self.emitted = set()
@@ -139,12 +140,12 @@ class Polly(object):
         # Randomize the selected words a bit.
         self.tweak(words)
 
-        if self.options["punctuation"]:
-            # Interleave punctuation if required.
-            punct = list(self.punct)
+        extras = list(self.punct if self.options["punctuation"] else set() |
+                      self.digits if self.options["digits"] else set())
+        if extras:
             for i in range(len(words)-1, 0, -1):
-                self.cr.shuffle(punct)
-                words[i:i] = punct[0]
+                self.cr.shuffle(extras)
+                words[i:i] = extras[0]
             words = "".join(words)
         else:
             # Otherwise, just use spaces.
@@ -157,17 +158,20 @@ class Polly(object):
         Probability of tweakage goes up as the number of words is reduced.
         """
         length = len(words)
+        extras = list(self.punct if self.options["punctuation"] else set() |
+                      self.digits if self.options["digits"] else set())
+        if not extras:
+            extras = list(string.uppercase)
         for (i, word) in enumerate(words):
             word = list(words[i])
             for j in range(len(word) - 1, -1, -1):
                 # 20% chance to convert a letter to upper case.
                 if self.cr.random() < 0.4 / length:
                     word[j] = word[j].upper()
-                # 10% chance to insert puntuation or digit between letters.
-                if self.cr.random() < 0.2 / length:
-                    punct = list(self.punct)
-                    self.cr.shuffle(punct)
-                    word[j:j] = punct[0]
+                # 15% chance to insert something between letters.
+                if extras and self.cr.random() < 0.3 / length:
+                    self.cr.shuffle(extras)
+                    word[j:j] = extras[0]
             words[i] = "".join(word)
 
     def bad_polly(self, word):
@@ -297,6 +301,7 @@ def main(args):
         "length": None,
         "nwords": None,
         "verbose": None,
+        "digits": None,
         "punctuation": None,
         "minchars": None,
         "maxchars": None,
@@ -314,6 +319,7 @@ def main(args):
         "length": "getint",
         "nwords": "getint",
         "verbose": "getboolean",
+        "digits": "getboolean",
         "punctuation": "getboolean",
         "minchars": "getint",
         "maxchars": "getint",
@@ -385,6 +391,9 @@ def main(args):
 
         if options["punctuation"] is None:
             options["punctuation"] = True
+
+        if options["digits"] is None:
+            options["digits"] = True
 
         if options["editing-mode"] is None:
             options["editing-mode"] = "emacs"
@@ -461,6 +470,9 @@ def get_commands(polly):
                         len(polly.words) > nwords and
                         polly.options["verbose"]):
                         note("Using %d most common words." % nwords)
+                    note("Punctuation? {} Digits? {}".format(
+                        self.options["punctuation"], self.options["digits"]),
+                         self.options["verbose"])
                     for _ in range(count):
                         passwd = polly.get_password()
                         print(repr(passwd), file=sys.stderr)
@@ -507,9 +519,10 @@ def get_commands(polly):
 
     note("Awk! Goodbye...")
 
-def note(msg):
-    sys.stdout.write("\n%s\n? " % msg)
-    sys.stdout.flush()
+def note(msg, verbose=True):
+    if verbose:
+        sys.stderr.write("\n%s\n? " % msg)
+        sys.stderr.flush()
 
 def read_imap(polly):
     while True:
