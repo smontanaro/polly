@@ -105,7 +105,12 @@ class Polly(object):
         # Words already used in a password on this run.
         self.used = set()
         # Cryptographically secure random number generator.
-        self.cr = random.SystemRandom()
+        if self.options["unittests"]:
+            # generate predictable set of "random" values for testing.
+            self.cr = random._inst
+            self.cr.seed(100)
+        else:
+            self.cr = random.SystemRandom()
 
     def __enter__(self):
         self.sema.acquire()
@@ -309,6 +314,7 @@ def main(args):
         "hash": None,
         "prompt": None,
         "gui": None,
+        "unittests": None,
         }
     getters = {
         "server": "get",
@@ -326,6 +332,7 @@ def main(args):
         "editing-mode": "get",
         "hash": "getboolean",
         "gui": "getboolean",
+        "unittests": "getboolean",
         }
 
     configfile = None
@@ -406,6 +413,9 @@ def main(args):
 
         if options["gui"] is None:
             options["gui"] = False
+
+        if options["unittests"] is None:
+            options["unittests"] = False
 
     # if None in options.values():
     #     usage("Server, user, password and folder are all required.")
