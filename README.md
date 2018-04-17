@@ -138,3 +138,36 @@ There are a number of caveats to this sort of program:
 
 Readline support is enabled. The default editing mode is emacs. You can set
 the edit-mode option in the config file to select vi.
+
+## Options
+
+### Dictionary Construction
+
+* server - IMAP server
+* user - email address on the server
+* password - password on the server
+* folder - name of the folder to process
+* nwords - size of dictionary
+
+### Generating Passwords
+
+* punctuation - whether to include punctuation in passwords (True/False)
+* digits - whether to use digits in passwords (True/False)
+* maxchars - maximum word length
+* length - number of words in a passphrase
+
+## Testing
+
+There's not much to the testing, just some test configs in tests/cfgs which
+are run with a predictable "random" number generator.  For this, a special
+"unittests" option is used. Don't use it for anything else, as it completely
+wrecks the random number generator.
+
+To run the tests, execute:
+
+    bash tests/runtests.sh
+
+The output will be compared with tests/output/expected.out.  To add new
+tests, add new config files to tests/cfgs (".cfg" is the required extension)
+and run the script with the --generate command line flag. The output will be
+written to stdout.
