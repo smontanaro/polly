@@ -68,6 +68,7 @@ import email
 from email.iterators import typed_subpart_iterator
 import getopt
 import imaplib
+import logging
 import math
 import os
 import pickle
@@ -87,6 +88,7 @@ PROG = os.path.split(sys.argv[0])[1]
 
 DFLT_DATE = datetime.datetime(2014, 8, 1, 0, 0, 0)
 class Polly(object):
+    "Workhorse of the system."
     def __init__(self, options):
         self.reader = None
         self.options = options
@@ -97,6 +99,7 @@ class Polly(object):
         self.emitted = set()
         self.bad = set()
         self.uids = set()
+        self.log = logging.getLogger(__name__)
         self.pfile = options["picklefile"]
         pkl_dir = os.path.dirname(self.pfile)
         self.bfile = os.path.join(pkl_dir, "polly.bad")
@@ -108,10 +111,11 @@ class Polly(object):
         # Cryptographically secure random number generator.
         if self.options["unittests"]:
             # generate predictable set of "random" values for testing.
-            self.cr = random._inst
-            self.cr.seed(100)
+            # pylint: disable=protected-access
+            self.rng = random._inst
+            self.rng.seed(100)
         else:
-            self.cr = random.SystemRandom()
+            self.rng = random.SystemRandom()
 
     def __enter__(self):
         self.sema.acquire()
@@ -120,11 +124,8 @@ class Polly(object):
     def __exit__(self, _type, _value, _traceback):
         self.sema.release()
 
-    def note(self, msg):
-        if self.options["verbose"]:
-            print(msg, file=sys.stderr)
-
     def get_password(self):
+        "Generate a password."
         length = self.options["length"]
         nwords = self.options["nwords"]
         minchars = self.options["minchars"]
@@ -138,7 +139,7 @@ class Polly(object):
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[-nwords:]]
 
-        self.cr.shuffle(words)
+        self.rng.shuffle(words)
         # Select the first length unused words from the shuffled list.
         words = [w for w in words
                    if minchars <= len(w) <= maxchars and
@@ -155,7 +156,7 @@ class Polly(object):
         extras = list(extras)
         if extras:
             for i in range(len(words)-1, 0, -1):
-                self.cr.shuffle(extras)
+                self.rng.shuffle(extras)
                 words[i:i] = extras[0]
             words = "".join(words)
         else:
@@ -178,21 +179,23 @@ class Polly(object):
             word = list(words[i])
             for j in range(len(word) - 1, -1, -1):
                 # 20% chance to convert a letter to upper case.
-                if self.cr.random() < 0.4 / length:
+                if self.rng.random() < 0.4 / length:
                     word[j] = word[j].upper()
                 # 15% chance to insert something between letters.
-                if extras and self.cr.random() < 0.3 / length:
-                    self.cr.shuffle(extras)
+                if extras and self.rng.random() < 0.3 / length:
+                    self.rng.shuffle(extras)
                     word[j:j] = extras[0]
             words[i] = "".join(word)
 
     def bad_polly(self, word):
+        "Add a word to the bad list."
         self.bad.add(word)
         self.emitted.discard(word)
 
     def get_not_words(self, dictfile):
+        "Retrieve word-like things which aren't really words."
         if not os.path.exists(dictfile):
-            self.note("%r does not exist" % dictfile)
+            self.log.error("%r does not exist", dictfile)
             return []
         with open(dictfile) as dictfp:
             raw = [w.strip().lower() for w in dictfp]
@@ -202,15 +205,16 @@ class Polly(object):
             return sorted(self.emitted - dict_words)
 
     def add_words(self, dictfile, nwords):
+        "Add words to our collection."
         if not os.path.exists(dictfile):
-            self.note("%r does not exist" % dictfile)
+            self.log.error("%r does not exist", dictfile)
             return
         upper_and_punct = self.punct | set(string.ascii_uppercase)
         with open(dictfile) as dictfp:
             raw = [w.strip()
                      for w in dictfp
                        if (not set(w) & upper_and_punct) and len(w) > 4]
-            self.cr.shuffle(raw)
+            self.rng.shuffle(raw)
             candidates = set(raw[:nwords])
             if not self.emitted:
                 # Cheat. Just initialize from the candidates.
@@ -232,6 +236,7 @@ class Polly(object):
         self.emitted = set(words)
 
     def load_pfile(self):
+        "Read state from the pickle file."
         if os.path.exists(self.pfile):
             # Bad word list is in separate plain text file.
             with open(self.pfile, "rb") as pfile:
@@ -242,6 +247,7 @@ class Polly(object):
                 self.bad |= set([w.strip() for w in bfile])
 
     def save_pfile(self):
+        "Write state to pickle file."
         with open(self.pfile, "wb") as pfile:
             pickle.dump((self.msg_ids, self.words, self.emitted), pfile)
         # Save bad words in a plain text file so we can retain them if
@@ -278,6 +284,7 @@ class Polly(object):
                     self.emitted.add(word)
 
     def print_statistics(self):
+        "Print some summary details."
         print("message ids:", len(self.msg_ids))
         print("all words:", len(self.words))
         print("common words:", len(self.emitted), end=' ')
@@ -290,8 +297,9 @@ class Polly(object):
         print()
 
     def start_reader(self):
+        "Fire up the IMAP reader thread."
         if self.reader is None or not self.reader.is_alive():
-            self.note("starting IMAP thread.")
+            self.log.info("starting IMAP thread.")
             self.reader = threading.Thread(target=read_imap,
                                             name="imap-thread",
                                             args=(self,))
@@ -299,12 +307,14 @@ class Polly(object):
             self.reader.start()
 
 def usage(msg=""):
+    "User help."
     if msg:
         print(msg, file=sys.stderr)
         print(file=sys.stderr)
     print(__doc__ % globals(), file=sys.stderr)
 
 def main(args):
+    "Where it all starts."
     options = {
         "server": None,
         "user": None,
@@ -332,7 +342,7 @@ def main(args):
         "folder": "get",
         "length": "getint",
         "nwords": "getint",
-        "verbose": "getboolean",
+        "verbose": "get",
         "digits": "getboolean",
         "punctuation": "getboolean",
         "minchars": "getint",
@@ -344,38 +354,17 @@ def main(args):
         "picklefile": "get",
         }
 
-    configfile = None
-    generate_n = 0
-    all_args = args[:]
-    opts, args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
-                               ["gui", "help"])
+    # Process the command line args once to locate any config file
+    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
+                                ["gui", "help"])
     for opt, arg in opts:
-        if opt == "-u":
-            options["user"] = arg
-        elif opt == "-p":
-            options["password"] = arg
-        elif opt == "-f":
-            options["folder"] = arg
-        elif opt == "-s":
-            options["server"] = arg
-        elif opt == "-v":
-            options["verbose"] = True
-        elif opt == "-g":
-            generate_n = int(arg)
-        elif opt == "-n":
-            options["prompt"] = False
-        elif opt in ("-G", "--gui"):
-            options["gui"] = True
-            run_gui(all_args)
-            return 0
-        elif opt == "-c":
+        if opt == "-c":
             configfile = arg
-        elif opt == "-H":
-            options["hash"] = True
         elif opt in ("-h", "--help"):
             usage()
             return 0
 
+    log_level = logging.FATAL
     if configfile is not None:
         # Fill in what wasn't given on the command line.
         config = RawConfigParser()
@@ -390,9 +379,6 @@ def main(args):
                     options[key] = value
 
         # These can legitimately be unspecified.
-        if options["verbose"] is None:
-            options["verbose"] = False
-
         if options["length"] is None:
             options["length"] = 4
 
@@ -433,19 +419,52 @@ def main(args):
         if not os.path.exists(options["picklefile"]):
             raise ValueError("Can't read {}".format(options["picklefile"]))
 
+        if options["verbose"] is not None:
+            log_level = getattr(logging, options["verbose"].upper(), -99)
+            if log_level == -99:
+                raise ValueError("Invalid log level %r" % options["verbose"])
+
     # if None in options.values():
     #     usage("Server, user, password and folder are all required.")
     #     return 1
 
+    generate_n = 0
+    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
+                                ["gui", "help"])
+    for opt, arg in opts:
+        # Ignore -c and -h on this pass.a
+        if opt == "-u":
+            options["user"] = arg
+        elif opt == "-p":
+            options["password"] = arg
+        elif opt == "-f":
+            options["folder"] = arg
+        elif opt == "-s":
+            options["server"] = arg
+        elif opt == "-v":
+            log_level -= 10
+            log_level = max(10, log_level)
+        elif opt == "-g":
+            generate_n = int(arg)
+        elif opt == "-n":
+            options["prompt"] = False
+        elif opt in ("-G", "--gui"):
+            options["gui"] = True
+            run_gui(args)
+            return 0
+        elif opt == "-H":
+            options["hash"] = True
+
+    logging.basicConfig(level=log_level)
     polly = Polly(options)
 
     # Just generate some passwords
     if generate_n:
         if options["hash"]:
-            def encrypt(p):
-                return "$dummy$" + binascii.hexlify(p)
+            def encrypt(passwd):
+                return "$dummy$" + binascii.hexlify(passwd)
         else:
-            encrypt = lambda x: x
+            encrypt = lambda passwd: passwd
         with polly:
             for _ in range(generate_n):
                 print(encrypt(polly.get_password()))
@@ -471,6 +490,8 @@ def main(args):
     return 0
 
 def get_commands(polly):
+    "Reader loop."
+    log = logging.getLogger(__name__)
     try:
         while True:
             prompt = "? " if polly.options["prompt"] else ""
@@ -492,9 +513,10 @@ def get_commands(polly):
                     if (len(polly.emitted) > nwords and
                         len(polly.words) > nwords and
                         polly.options["verbose"]):
-                        polly.note("Using %d most common words." % nwords)
-                    polly.note("Punctuation? {} Digits? {}".format(
-                        polly.options["punctuation"], polly.options["digits"]))
+                        log.info("Using %d most common words.", nwords)
+                    log.debug("Punctuation? %s Digits? %s",
+                              polly.options["punctuation"],
+                              polly.options["digits"])
                     for _ in range(count):
                         passwd = polly.get_password()
                         print(repr(passwd), file=sys.stderr)
@@ -535,11 +557,11 @@ def get_commands(polly):
                         nwords = int(nwords)
                         polly.add_words(dictfile, nwords)
                 else:
-                    polly.note("Unrecognized command %r" % command)
+                    log.error("Unrecognized command %r", command)
     except KeyboardInterrupt:
         pass
 
-    polly.note("Awk! Goodbye...")
+    log.info("Awk! Goodbye...")
 
 def read_imap(polly):
     while True:
@@ -552,22 +574,22 @@ def read_loop(polly):
         msg_ids = polly.msg_ids.copy()
         seen_uids = polly.uids
 
+    log = logging.getLogger(__name__)
     # Reference the verbose parameter through the options dict so the
     # user can toggle the setting on-the-fly.
     with IMAP(options["server"]) as mail:
         try:
             mail.login(options["user"], options["password"])
         except IMAP.error:
-            polly.note("login failed. check your credentials.")
+            log.error("login failed. check your credentials.")
             return
         if options["verbose"]:
-            polly.note("login successful.")
+            log.info("login successful.")
         (result, data) = mail.select(options["folder"])
         if result != "OK":
-            polly.note("failed to select folder %r." % options["folder"])
+            log.warning("failed to select folder %r.", options["folder"])
             return
-        if options["verbose"]:
-            polly.note("select folder %r." % options["folder"])
+        log.debug("select folder %r.", options["folder"])
 
         nhdrs = nmsgs = nnew = 0
         start = datetime.datetime.now()-datetime.timedelta(days=10)
@@ -576,24 +598,24 @@ def read_loop(polly):
         try:
             result, data = mail.uid('search', None, constraint)
         except IMAP.error:
-            polly.note("failed to search for constraint: %s" % constraint)
+            log.error("failed to search for constraint: %s", constraint)
             return
         else:
             if result != "OK":
-                polly.note("failed to search for constraint: %s" % constraint)
+                log.error("failed to search for constraint: %s", constraint)
                 return
 
         uids = set(data[0].split()) - seen_uids
         if options["verbose"]:
-            polly.note("search successful - %d uids returned." % len(uids))
+            log.info("search successful - %d uids returned.", len(uids))
         if uids:
-            polly.note("Will process %d uids" % len(uids))
+            log.info("Will process %d uids", len(uids))
         for uid in uids:
             seen_uids.add(uid)
             # First, check the message-id to see if we've already seen it.
             result, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
             if result != "OK":
-                polly.note("failed to fetch headers.")
+                log.error("failed to fetch headers.")
                 return
 
             nhdrs += 1
@@ -610,14 +632,14 @@ def read_loop(polly):
             # on-the-fly.
             with polly:
                 if polly.options["verbose"]:
-                    polly.note("New message id: %s" % msg_id)
+                    polly.debug("New message id: %s", msg_id)
 
             # Okay, we haven't seen this message yet. Process its text
             # (well, the first text part we come across).
             nmsgs += 1
             result, data = mail.fetch(uid, "(RFC822 BODY.PEEK[])")
             if result != "OK":
-                polly.note("failed to fetch body.")
+                log.error("failed to fetch body.")
                 return
             try:
                 message = email.message_from_string(data[0][1])
@@ -632,7 +654,7 @@ def read_loop(polly):
                 polly.process_text(text)
 
             if nnew % 10 == 0:
-                polly.note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
+                log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
                 with polly:
                     polly.msg_ids = msg_ids.copy()
             # Remember the date for the next time.
@@ -644,14 +666,16 @@ def read_loop(polly):
                     msg_date = dateutil.parser.parse(msg_date)
                     msg_date = msg_date.replace(tzinfo=None)
                 except (ValueError, TypeError):
-                    polly.note("Invalid date string: %r" % msg_date)
+                    log.warning("Invalid date string: %r" % msg_date)
                     msg_date = DFLT_DATE
 
-        polly.note("hdrs: %d msgs: %d new: %d" % (nhdrs, nmsgs, nnew))
+        log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
 
 def run_gui(args):
-    # Re-run as a subprocess which we will talk to, need to run it
-    # without the gui though.
+    """Re-run as a subprocess which we will talk to.
+
+    Need to run it without the gui though.
+    """
     for garg in ("-G", "--gui"):
         while garg in args:
             args.remove(garg)
@@ -665,6 +689,7 @@ def run_gui(args):
     pipe.kill()
 
 class Application(tkinter.Frame):
+    "Tk GUI."
     def __init__(self, pipe, master=None):
         tkinter.Frame.__init__(self, master)
         self.pipe = pipe
@@ -739,27 +764,6 @@ def get_body(message):
                get_charset(message),
                "replace")
     return body.strip()
-
-# def get_text(message):
-#     maintype = message.get_content_maintype()
-#     if maintype == 'multipart':
-#         for part in message.get_payload():
-#             if part.get_content_maintype() == 'text':
-#                 charset = part.get_charset()
-#                 payload = part.get_payload()
-#                 if charset is not None:
-#                     polly.note(">> %s" % charset)
-#                     return charset.to_splittable(part.get_payload())
-#                 return payload
-#     elif maintype == 'text':
-#         charset = message.get_charset()
-#         payload = message.get_payload()
-#         if charset is not None:
-#             polly.note(">> %s" % charset)
-#             return charset.to_splittable(message.get_payload())
-#         return payload
-#     else:
-#         return ""
 
 if __name__ == "__main__":
     main(sys.argv[1:])
