@@ -13,7 +13,7 @@ fi
 
 for f in $(ls tests/cfgs/*.cfg) ; do
     echo "* $f"
-    python polly.py -g 10 -c ${f}
+    python src/polly.py -g 5 -c ${f}
     echo ""
 done > ${OUT}
 
