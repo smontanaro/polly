@@ -139,6 +139,7 @@ class Polly(object):
             counts = sorted(zip(self.words.values(), self.words.keys()))
             words = [w for (_count, w) in counts[-nwords:]]
 
+        words = sorted(words)
         self.rng.shuffle(words)
         # Select the first length unused words from the shuffled list.
         words = [w for w in words
@@ -153,15 +154,13 @@ class Polly(object):
 
         extras = self.punct if self.options["punctuation"] else set()
         extras |= self.digits if self.options["digits"] else set()
-        extras = list(extras)
-        if extras:
-            for i in range(len(words)-1, 0, -1):
-                self.rng.shuffle(extras)
-                words[i:i] = extras[0]
-            words = "".join(words)
-        else:
-            # Otherwise, just use spaces.
-            words = " ".join(words)
+        extras = sorted(extras)
+        if not extras:
+            extras = [" "]
+        for i in range(len(words)-1, 0, -1):
+            self.rng.shuffle(extras)
+            words[i:i] = extras[0]
+        words = "".join(words)
         return words
 
     def tweak(self, words):
@@ -172,7 +171,7 @@ class Polly(object):
         length = len(words)
         extras = self.punct if self.options["punctuation"] else set()
         extras |= self.digits if self.options["digits"] else set()
-        extras = list(extras)
+        extras = sorted(extras)
         if not extras:
             extras = list(string.ascii_uppercase)
         for (i, word) in enumerate(words):
@@ -182,7 +181,7 @@ class Polly(object):
                 if self.rng.random() < 0.4 / length:
                     word[j] = word[j].upper()
                 # 15% chance to insert something between letters.
-                if extras and self.rng.random() < 0.3 / length:
+                if self.rng.random() < 0.3 / length:
                     self.rng.shuffle(extras)
                     word[j:j] = extras[0]
             words[i] = "".join(word)
