@@ -1,2 +1,6 @@
 *~
-
+configs
+polly.pkl
+polly.bad
+*.diff
+*words
