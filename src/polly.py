@@ -172,16 +172,14 @@ class Polly(object):
         extras = self.punct if self.options["punctuation"] else set()
         extras |= self.digits if self.options["digits"] else set()
         extras = sorted(extras)
-        if not extras:
-            extras = list(string.ascii_uppercase)
         for (i, word) in enumerate(words):
             word = list(words[i])
             for j in range(len(word) - 1, -1, -1):
                 # 20% chance to convert a letter to upper case.
-                if self.rng.random() < 0.4 / length:
+                if self.options["upper"] and self.rng.random() < 0.4 / length:
                     word[j] = word[j].upper()
                 # 15% chance to insert something between letters.
-                if self.rng.random() < 0.3 / length:
+                if self.rng.random() < 0.3 / length and extras:
                     self.rng.shuffle(extras)
                     word[j:j] = extras[0]
             words[i] = "".join(word)
@@ -324,6 +322,7 @@ def main(args):
         "verbose": None,
         "digits": None,
         "punctuation": None,
+        "upper": None,
         "minchars": None,
         "maxchars": None,
         "editing-mode": None,
@@ -344,6 +343,7 @@ def main(args):
         "verbose": "get",
         "digits": "getboolean",
         "punctuation": "getboolean",
+        "upper": "getboolean",
         "minchars": "getint",
         "maxchars": "getint",
         "editing-mode": "get",
@@ -392,6 +392,9 @@ def main(args):
 
         if options["punctuation"] is None:
             options["punctuation"] = True
+
+        if options["upper"] is None:
+            options["upper"] = True
 
         if options["digits"] is None:
             options["digits"] = True
@@ -591,7 +594,7 @@ def read_loop(polly):
         log.debug("select folder %r.", options["folder"])
 
         nhdrs = nmsgs = nnew = 0
-        start = datetime.datetime.now()-datetime.timedelta(days=10)
+        start = datetime.datetime.now()-datetime.timedelta(days=100)
         stamp = start.strftime("%d-%b-%Y")
         constraint = "(SENTSINCE %s)" % stamp
         try:
