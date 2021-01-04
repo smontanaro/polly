@@ -5,7 +5,7 @@ understand the ramifications of using security software which almost
 certainly has bugs which black hats could exploit.**
 
 Build a corpus of common words from messages in an IMAP folder then
-use that to generate XKCD936-style passwords.
+use that to generate [XKCD936-style passwords](https://xkcd.com/936/).
 
 Run "python polly.py -h" to get a brief description of how to run the
 program. See polly.cfg.sample for a sample config file.  It's particularly
