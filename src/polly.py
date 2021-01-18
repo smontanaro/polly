@@ -3,14 +3,14 @@
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
 usage: %(PROG)s -s server -u user -p password -f folder [ -g N [ -H what ] ] \
-        [ -G | --gui ] [ -c config ]
+        [ -G | --gui ] [ -c config ] [ -L level ]
 
 The server, user, password and folder flags are required unless they
 are specified in the config file.  If the -g flag is given, polly will
 print N passwords, then exit without starting a command loop. If the
 -c flag is given, options are read from the named config file. The -s,
 -u, -p, and -f flags take precedence over the values defined in the
-config file.
+config file. The -L option is used to control the logging level.
 
 When run with the -G or --gui flag, a graphical user interface is started.
 
@@ -30,7 +30,7 @@ password       - the password for the IMAP server (required)
 folder         - the folder to check for messages (required)
 nwords         - n common words to use when considering candidates
                  (default 2048)
-verbose        - when True, emit more messages (default False)
+verbose        - set to string value of log level (default FATAL)
 punctuation    - when True, allow punctuation between words (default False)
 digits         - when True, allow digits between words (default False)
 minchars       - length of shortest word to use when generating passwords
@@ -86,8 +86,10 @@ import dateutil.parser
 
 PROG = os.path.split(sys.argv[0])[1]
 
+LOG_FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
+
 DFLT_DATE = datetime.datetime(2014, 8, 1, 0, 0, 0)
-class Polly(object):
+class Polly:
     "Workhorse of the system."
     def __init__(self, options):
         self.reader = None
@@ -104,7 +106,8 @@ class Polly(object):
         pkl_dir = os.path.dirname(self.pfile)
         self.bfile = os.path.join(pkl_dir, "polly.bad")
         self.load_pfile()
-        # Workers will acquire/release Polly to operate on internal data.
+        # Workers will acquire/release Polly to operate on internal
+        # data. See __enter__ and __exit__.
         self.sema = threading.Semaphore()
         # Words already used in a password on this run.
         self.used = set()
@@ -198,7 +201,7 @@ class Polly(object):
             raw = [w.strip().lower() for w in dictfp]
             dict_words = set(raw)
             for suffix in ("ing", "ed", "es", "s", "ies"):
-                dict_words |= set([w+suffix for w in raw])
+                dict_words |= {w+suffix for w in raw}
             return sorted(self.emitted - dict_words)
 
     def add_words(self, dictfile, nwords):
@@ -236,17 +239,23 @@ class Polly(object):
         "Read state from the pickle file."
         if os.path.exists(self.pfile):
             # Bad word list is in separate plain text file.
-            with open(self.pfile, "rb") as pfile:
-                (self.msg_ids, self.words, self.emitted) = pickle.load(pfile)
+            try:
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words, self.emitted, self.uids) = pickle.load(pfile)
+            except ValueError:
+                with open(self.pfile, "rb") as pfile:
+                    (self.msg_ids, self.words, self.emitted) = pickle.load(pfile)
+                    self.uids = set()
 
         if os.path.exists(self.bfile):
             with open(self.bfile) as bfile:
-                self.bad |= set([w.strip() for w in bfile])
+                self.bad |= {w.strip() for w in bfile}
 
     def save_pfile(self):
         "Write state to pickle file."
         with open(self.pfile, "wb") as pfile:
-            pickle.dump((self.msg_ids, self.words, self.emitted), pfile)
+            pickle.dump((self.msg_ids, self.words, self.emitted, self.uids), pfile)
+
         # Save bad words in a plain text file so we can retain them if
         # we decide to toss the pickle file, and so we can easily edit
         # the bad words list.
@@ -297,11 +306,178 @@ class Polly(object):
         "Fire up the IMAP reader thread."
         if self.reader is None or not self.reader.is_alive():
             self.log.info("starting IMAP thread.")
-            self.reader = threading.Thread(target=read_imap,
+            self.reader = threading.Thread(target=self.read_imap,
                                             name="imap-thread",
-                                            args=(self,))
+                                            args=())
             self.reader.daemon = True
             self.reader.start()
+
+    def get_commands(self):
+        "Reader loop."
+        try:
+            while True:
+                prompt = "? " if self.options["prompt"] else ""
+                try:
+                    command = input(prompt)
+                except EOFError:
+                    break
+                command = command.strip()
+                if not command:
+                    continue
+                try:
+                    command, rest = command.split(None, 1)
+                except ValueError:
+                    rest = ""
+                with self:
+                    if command == "password":
+                        self.generate_passwords(int(rest) if rest else 1)
+                    elif command == "read":
+                        self.start_reader()
+                    elif command == "stat":
+                        self.print_statistics()
+                    elif command == "rebuild":
+                        self.rebuild()
+                    elif command == "save":
+                        self.save_pfile()
+                    elif command == "exit":
+                        break
+                    elif command in ("help", "?"):
+                        usage()
+                    elif command == "bad":
+                        for word in rest.split():
+                            self.bad_polly(word)
+                    elif command == "dict":
+                        not_really_words = " ".join(self.get_not_words(rest))
+                        print(textwrap.fill(not_really_words))
+                    elif command == "add":
+                        dictfile, nwords = rest.split()
+                        nwords = int(nwords)
+                        self.add_words(dictfile, nwords)
+                    else:
+                        self.log.error("Unrecognized command %r", command)
+        except KeyboardInterrupt:
+            pass
+
+        self.log.info("Awk! Goodbye...")
+
+    def generate_passwords(self, count):
+        "Generate COUNT passwords."
+        nwords = self.options["nwords"]
+        if (len(self.emitted) > nwords and
+            len(self.words) > nwords):
+            self.log.info("Using %d most common words.", nwords)
+        self.log.debug("Punctuation? %s Digits? %s",
+                       self.options["punctuation"],
+                       self.options["digits"])
+        for _ in range(count):
+            passwd = self.get_password()
+            print(repr(passwd), file=sys.stderr)
+            sys.stdout.write(passwd+"\n")
+            sys.stdout.flush()
+
+    def read_imap(self):
+        while True:
+            self.read_loop()
+            time.sleep(600)
+
+    def read_loop(self):
+        with self:
+            options = self.options.copy()
+            msg_ids = self.msg_ids.copy()
+            seen_uids = self.uids
+
+        # Reference the verbose parameter through the options dict so the
+        # user can toggle the setting on-the-fly.
+        with IMAP(options["server"]) as mail:
+            try:
+                mail.login(options["user"], options["password"])
+            except IMAP.error:
+                self.log.error("login failed. check your credentials.")
+                return
+            self.log.info("login successful.")
+            (result, data) = mail.select(options["folder"])
+            if result != "OK":
+                self.log.warning("failed to select folder %r.", options["folder"])
+                return
+            self.log.debug("select folder %r.", options["folder"])
+
+            nhdrs = nmsgs = nnew = 0
+            start = datetime.datetime.now()-datetime.timedelta(days=100)
+            stamp = start.strftime("%d-%b-%Y")
+            constraint = "(SENTSINCE %s)" % stamp
+            try:
+                result, data = mail.uid('search', None, constraint)
+            except IMAP.error:
+                self.log.error("failed to search for constraint: %s", constraint)
+                return
+            else:
+                if result != "OK":
+                    self.log.error("failed to search for constraint: %s", constraint)
+                    return
+
+            uids = set(data[0].split()) - seen_uids
+            self.log.info("search successful - %d new uids returned.", len(uids))
+            if uids:
+                self.log.info("Will process %d uids", len(uids))
+            for uid in uids:
+                seen_uids.add(uid)
+                # First, check the message-id to see if we've already seen it.
+                result, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
+                if result != "OK":
+                    self.log.error("failed to fetch headers.")
+                    return
+
+                nhdrs += 1
+                try:
+                    message = email.message_from_string(data[0][1])
+                except TypeError:
+                    continue
+                msg_id = message.get("Message-ID")
+                if msg_id is None or msg_id in msg_ids:
+                    continue
+                msg_ids.add(msg_id)
+                self.log.debug("New message id: %s", msg_id)
+
+                # Okay, we haven't seen this message yet. Process its text
+                # (well, the first text part we come across).
+                nmsgs += 1
+                result, data = mail.fetch(uid, "(RFC822 BODY.PEEK[])")
+                if result != "OK":
+                    self.log.error("failed to fetch body.")
+                    return
+                try:
+                    message = email.message_from_string(data[0][1])
+                except TypeError:
+                    continue
+                text = get_body(message)
+                if not text:
+                    continue
+
+                nnew += 1
+                with self:
+                    self.process_text(text)
+
+                if nnew % 10 == 0:
+                    self.log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+                    with self:
+                        self.msg_ids = msg_ids.copy()
+                        self.uids = seen_uids.copy()
+                # Remember the date for the next time.
+                msg_date = message.get("Date")
+                if msg_date is None:
+                    msg_date = DFLT_DATE
+                else:
+                    try:
+                        msg_date = dateutil.parser.parse(msg_date)
+                        msg_date = msg_date.replace(tzinfo=None)
+                    except (ValueError, TypeError):
+                        self.log.warning("Invalid date string: %r", msg_date)
+                        msg_date = DFLT_DATE
+
+            self.log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+            with self:
+                self.msg_ids = msg_ids.copy()
+                self.uids = seen_uids.copy()
 
 def usage(msg=""):
     "User help."
@@ -353,9 +529,9 @@ def main(args):
         "picklefile": "get",
         }
 
+    argstring = "s:u:p:f:c:g:HhL:Gn"
     # Process the command line args once to locate any config file
-    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
-                                ["gui", "help"])
+    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
     for opt, arg in opts:
         if opt == "-c":
             configfile = arg
@@ -421,18 +597,12 @@ def main(args):
         if not os.path.exists(options["picklefile"]):
             raise ValueError("Can't read {}".format(options["picklefile"]))
 
-        if options["verbose"] is not None:
-            log_level = getattr(logging, options["verbose"].upper(), -99)
-            if log_level == -99:
-                raise ValueError("Invalid log level %r" % options["verbose"])
-
     # if None in options.values():
     #     usage("Server, user, password and folder are all required.")
     #     return 1
 
     generate_n = 0
-    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhvGn",
-                                ["gui", "help"])
+    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
     for opt, arg in opts:
         # Ignore -c and -h on this pass.a
         if opt == "-u":
@@ -443,11 +613,10 @@ def main(args):
             options["folder"] = arg
         elif opt == "-s":
             options["server"] = arg
-        elif opt == "-v":
-            log_level -= 10
-            log_level = max(10, log_level)
         elif opt == "-g":
             generate_n = int(arg)
+        elif opt == "-L":
+            options["verbose"] = arg
         elif opt == "-n":
             options["prompt"] = False
         elif opt in ("-G", "--gui"):
@@ -457,7 +626,13 @@ def main(args):
         elif opt == "-H":
             options["hash"] = True
 
-    logging.basicConfig(level=log_level)
+    if options["verbose"] is not None:
+        log_level = getattr(logging, options["verbose"].upper(), -99)
+        if log_level == -99:
+            raise ValueError("Invalid log level %r" % options["verbose"])
+
+    logging.basicConfig(level=log_level, format=LOG_FORMAT, force=True)
+
     polly = Polly(options)
 
     # Just generate some passwords
@@ -482,7 +657,7 @@ def main(args):
     atexit.register(readline.write_history_file, histfile)
 
     try:
-        get_commands(polly)
+        polly.get_commands()
     except KeyboardInterrupt:
         pass
     finally:
@@ -490,188 +665,6 @@ def main(args):
             polly.save_pfile()
 
     return 0
-
-def get_commands(polly):
-    "Reader loop."
-    log = logging.getLogger(__name__)
-    try:
-        while True:
-            prompt = "? " if polly.options["prompt"] else ""
-            try:
-                command = input(prompt)
-            except EOFError:
-                break
-            command = command.strip()
-            if not command:
-                continue
-            try:
-                command, rest = command.split(None, 1)
-            except ValueError:
-                rest = ""
-            if command == "password":
-                count = int(rest) if rest else 1
-                with polly:
-                    nwords = polly.options["nwords"]
-                    if (len(polly.emitted) > nwords and
-                        len(polly.words) > nwords and
-                        polly.options["verbose"]):
-                        log.info("Using %d most common words.", nwords)
-                    log.debug("Punctuation? %s Digits? %s",
-                              polly.options["punctuation"],
-                              polly.options["digits"])
-                    for _ in range(count):
-                        passwd = polly.get_password()
-                        print(repr(passwd), file=sys.stderr)
-                        sys.stdout.write(passwd+"\n")
-                        sys.stdout.flush()
-            elif command == "read":
-                with polly:
-                    polly.start_reader()
-            elif command == "stat":
-                with polly:
-                    polly.print_statistics()
-            elif command == "rebuild":
-                with polly:
-                    polly.rebuild()
-            elif command == "save":
-                with polly:
-                    polly.save_pfile()
-            elif command == "verbose":
-                with polly:
-                    polly.options["verbose"] = not polly.options["verbose"]
-                    print("verbose:", polly.options["verbose"])
-            elif command == "exit":
-                break
-            elif command in ("help", "?"):
-                usage()
-            else:
-                if command == "bad":
-                    with polly:
-                        for word in rest.split():
-                            polly.bad_polly(word)
-                elif command == "dict":
-                    with polly:
-                        not_really_words = " ".join(polly.get_not_words(rest))
-                        print(textwrap.fill(not_really_words))
-                elif command == "add":
-                    with polly:
-                        dictfile, nwords = rest.split()
-                        nwords = int(nwords)
-                        polly.add_words(dictfile, nwords)
-                else:
-                    log.error("Unrecognized command %r", command)
-    except KeyboardInterrupt:
-        pass
-
-    log.info("Awk! Goodbye...")
-
-def read_imap(polly):
-    while True:
-        read_loop(polly)
-        time.sleep(600)
-
-def read_loop(polly):
-    with polly:
-        options = polly.options.copy()
-        msg_ids = polly.msg_ids.copy()
-        seen_uids = polly.uids
-
-    log = logging.getLogger(__name__)
-    # Reference the verbose parameter through the options dict so the
-    # user can toggle the setting on-the-fly.
-    with IMAP(options["server"]) as mail:
-        try:
-            mail.login(options["user"], options["password"])
-        except IMAP.error:
-            log.error("login failed. check your credentials.")
-            return
-        if options["verbose"]:
-            log.info("login successful.")
-        (result, data) = mail.select(options["folder"])
-        if result != "OK":
-            log.warning("failed to select folder %r.", options["folder"])
-            return
-        log.debug("select folder %r.", options["folder"])
-
-        nhdrs = nmsgs = nnew = 0
-        start = datetime.datetime.now()-datetime.timedelta(days=100)
-        stamp = start.strftime("%d-%b-%Y")
-        constraint = "(SENTSINCE %s)" % stamp
-        try:
-            result, data = mail.uid('search', None, constraint)
-        except IMAP.error:
-            log.error("failed to search for constraint: %s", constraint)
-            return
-        else:
-            if result != "OK":
-                log.error("failed to search for constraint: %s", constraint)
-                return
-
-        uids = set(data[0].split()) - seen_uids
-        if options["verbose"]:
-            log.info("search successful - %d uids returned.", len(uids))
-        if uids:
-            log.info("Will process %d uids", len(uids))
-        for uid in uids:
-            seen_uids.add(uid)
-            # First, check the message-id to see if we've already seen it.
-            result, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
-            if result != "OK":
-                log.error("failed to fetch headers.")
-                return
-
-            nhdrs += 1
-            try:
-                message = email.message_from_string(data[0][1])
-            except TypeError:
-                continue
-            msg_id = message.get("Message-ID")
-            if msg_id is None or msg_id in msg_ids:
-                continue
-            msg_ids.add(msg_id)
-            # Reference the verbose parameter here through
-            # self.options so the user can toggle the setting
-            # on-the-fly.
-            with polly:
-                if polly.options["verbose"]:
-                    polly.debug("New message id: %s", msg_id)
-
-            # Okay, we haven't seen this message yet. Process its text
-            # (well, the first text part we come across).
-            nmsgs += 1
-            result, data = mail.fetch(uid, "(RFC822 BODY.PEEK[])")
-            if result != "OK":
-                log.error("failed to fetch body.")
-                return
-            try:
-                message = email.message_from_string(data[0][1])
-            except TypeError:
-                continue
-            text = get_body(message)
-            if not text:
-                continue
-
-            nnew += 1
-            with polly:
-                polly.process_text(text)
-
-            if nnew % 10 == 0:
-                log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
-                with polly:
-                    polly.msg_ids = msg_ids.copy()
-            # Remember the date for the next time.
-            msg_date = message.get("Date")
-            if msg_date is None:
-                msg_date = DFLT_DATE
-            else:
-                try:
-                    msg_date = dateutil.parser.parse(msg_date)
-                    msg_date = msg_date.replace(tzinfo=None)
-                except (ValueError, TypeError):
-                    log.warning("Invalid date string: %r" % msg_date)
-                    msg_date = DFLT_DATE
-
-        log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
 
 def run_gui(args):
     """Re-run as a subprocess which we will talk to.
@@ -725,7 +718,7 @@ class IMAP(imaplib.IMAP4_SSL):
     def __enter__(self):
         return self
 
-    def __exit__(self, _type, _value, _traceback):
+    def __exit__(self, *_args):
         self.logout()
 
 # get_charset and get_body are from:
@@ -747,12 +740,8 @@ def get_body(message):
 
     if message.is_multipart():
         #get the plain text version only
-        text_parts = [part
-                      for part in typed_subpart_iterator(message,
-                                                         'text',
-                                                         'plain')]
         body = []
-        for part in text_parts:
+        for part in typed_subpart_iterator(message, 'text', 'plain'):
             charset = get_charset(part, get_charset(message))
             body.append(str(part.get_payload(decode=True),
                                 charset,
