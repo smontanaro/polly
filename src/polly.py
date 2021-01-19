@@ -305,7 +305,7 @@ class Polly:
     def start_reader(self):
         "Fire up the IMAP reader thread."
         if self.reader is None or not self.reader.is_alive():
-            self.log.info("starting IMAP thread.")
+            self.log.debug("starting IMAP thread.")
             self.reader = threading.Thread(target=self.read_imap,
                                             name="imap-thread",
                                             args=())
@@ -394,7 +394,7 @@ class Polly:
             except IMAP.error:
                 self.log.error("login failed. check your credentials.")
                 return
-            self.log.info("login successful.")
+            self.log.debug("login successful.")
             (result, data) = mail.select(options["folder"])
             if result != "OK":
                 self.log.warning("failed to select folder %r.", options["folder"])
@@ -402,7 +402,7 @@ class Polly:
             self.log.debug("select folder %r.", options["folder"])
 
             nhdrs = nmsgs = nnew = 0
-            start = datetime.datetime.now()-datetime.timedelta(days=100)
+            start = datetime.datetime.now()-datetime.timedelta(days=50)
             stamp = start.strftime("%d-%b-%Y")
             constraint = "(SENTSINCE %s)" % stamp
             try:
@@ -418,7 +418,7 @@ class Polly:
             uids = set(data[0].split()) - seen_uids
             self.log.info("search successful - %d new uids returned.", len(uids))
             if uids:
-                self.log.info("Will process %d uids", len(uids))
+                self.log.debug("Will process %d uids", len(uids))
             for uid in uids:
                 seen_uids.add(uid)
                 # First, check the message-id to see if we've already seen it.
@@ -458,7 +458,7 @@ class Polly:
                     self.process_text(text)
 
                 if nnew % 10 == 0:
-                    self.log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+                    self.log.info("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
                     with self:
                         self.msg_ids = msg_ids.copy()
                         self.uids = seen_uids.copy()
@@ -474,7 +474,7 @@ class Polly:
                         self.log.warning("Invalid date string: %r", msg_date)
                         msg_date = DFLT_DATE
 
-            self.log.debug("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+            self.log.info("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
             with self:
                 self.msg_ids = msg_ids.copy()
                 self.uids = seen_uids.copy()
