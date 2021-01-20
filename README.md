@@ -123,7 +123,16 @@ There are a number of caveats to this sort of program:
 
 * exit           - quit the program
 
+* quit           - quit the program
+
+* good dictfile  - declare the words in dictfile to be "good" when
+                   executing the dict command.
+
 * help or ?      - print this help
+
+* option         - display all current options
+
+* option name value - set option "name" to value
 
 * password [n]   - generate n passwords (default 1)
 
@@ -155,6 +164,7 @@ the edit-mode option in the config file to select vi.
 * punctuation - whether to include punctuation in passwords (True/False)
 * digits - whether to use digits in passwords (True/False)
 * upper - whether to randomly upcase some letters (True/False)
+* minchars - minimum word length
 * maxchars - maximum word length
 * length - number of words in a passphrase
 
