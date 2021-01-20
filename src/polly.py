@@ -3,7 +3,7 @@
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
 usage: %(PROG)s -s server -u user -p password -f folder [ -g N [ -H what ] ] \
-        [ -G | --gui ] [ -c config ] [ -L level ]
+        [ -c config ] [ -L level ]
 
 The server, user, password and folder flags are required unless they
 are specified in the config file.  If the -g flag is given, polly will
@@ -11,8 +11,6 @@ print N passwords, then exit without starting a command loop. If the
 -c flag is given, options are read from the named config file. The -s,
 -u, -p, and -f flags take precedence over the values defined in the
 config file. The -L option is used to control the logging level.
-
-When run with the -G or --gui flag, a graphical user interface is started.
 
 When generating passwords, you can specify that they are to be hashed
 using the -H flag. You must also give the type of hash to use. Any
@@ -77,12 +75,10 @@ import re
 import readline
 import ssl
 import string
-import subprocess
 import sys
 import textwrap
 import threading
 import time
-import tkinter
 
 import imapclient
 
@@ -409,8 +405,6 @@ class Polly:
                                 self.options[option] = value
                             elif option == "folder":
                                 self.options[option] = value
-                            elif option == "gui":
-                                self.log.error("GUI mode must be set at startup.")
                             else:
                                 self.log.error("Don't know how to set option %r", option)
                     else:
@@ -561,9 +555,6 @@ def read_config(configfile, options):
         if options["prompt"] is None:
             options["prompt"] = True
 
-        if options["gui"] is None:
-            options["gui"] = False
-
         if options["unittests"] is None:
             options["unittests"] = False
 
@@ -588,7 +579,6 @@ GETTERS = {
     "maxchars": "getint",
     "editing-mode": "get",
     "hash": "getboolean",
-    "gui": "getboolean",
     "unittests": "getboolean",
     "picklefile": "get",
     }
@@ -612,14 +602,13 @@ def main(args):
         "editing-mode": None,
         "hash": None,
         "prompt": None,
-        "gui": None,
         "unittests": None,
         "picklefile": None,
         }
 
-    argstring = "s:u:p:f:c:g:HhL:Gn"
+    argstring = "s:u:p:f:c:g:HhL:n"
     # Process the command line args once to locate any config file
-    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
+    opts, _args = getopt.getopt(args, argstring, ["help"])
     configfile = None
     for opt, arg in opts:
         if opt == "-c":
@@ -632,7 +621,7 @@ def main(args):
     read_config(configfile, options)
 
     generate_n = 0
-    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
+    opts, _args = getopt.getopt(args, argstring, ["help"])
     for opt, arg in opts:
         # Ignore -c and -h on this pass.a
         if opt == "-u":
@@ -649,10 +638,6 @@ def main(args):
             options["verbose"] = arg
         elif opt == "-n":
             options["prompt"] = False
-        elif opt in ("-G", "--gui"):
-            options["gui"] = True
-            run_gui(args)
-            return 0
         elif opt == "-H":
             options["hash"] = True
 
@@ -689,56 +674,9 @@ def main(args):
     try:
         polly.get_commands()
     finally:
-        if not options["gui"]:
-            polly.save_pfile()
+        polly.save_pfile()
 
     return 0
-
-def run_gui(args):
-    """Re-run as a subprocess which we will talk to.
-
-    Need to run it without the gui though.
-    """
-    for garg in ("-G", "--gui"):
-        while garg in args:
-            args.remove(garg)
-    args = ["python", sys.argv[0], "-n"] + args
-    pipe = subprocess.Popen(args, stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, bufsize=1)
-    root = tkinter.Tk()
-    app = Application(pipe, master=root)
-    app.mainloop()
-    root.destroy()
-    pipe.kill()
-
-# pylint: disable=too-many-ancestors
-class Application(tkinter.Frame):
-    "Tk GUI."
-    def __init__(self, pipe, master=None):
-        tkinter.Frame.__init__(self, master)
-        self.pipe = pipe
-        self.pack()
-        self.create_widgets()
-
-    def run_command(self):
-        print(">>", self.entry.get(), "->", end=' ')
-        print(self.entry.get().strip(), file=self.pipe.stdin)
-        self.pipe.stdin.flush()
-        print(self.pipe.stdout.readline())
-
-    def handle_key(self, event):
-        if event.char == "\r":
-            self.run_command()
-
-    def create_widgets(self):
-        self.entry = tkinter.Entry(self)
-        self.entry.pack(side=tkinter.TOP)
-        self.entry.bind("<Key>", self.handle_key)
-
-        self.exit = tkinter.Button(self)
-        self.exit["text"] = "Quit"
-        self.exit.pack(side=tkinter.TOP)
-        self.exit["command"] = self.quit
 
 # get_charset and get_body are from:
 #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
