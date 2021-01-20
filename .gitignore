@@ -1,6 +1,7 @@
 *~
 configs
 polly.pkl
+polly.good
 polly.bad
 *.diff
 *words
