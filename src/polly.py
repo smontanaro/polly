@@ -67,13 +67,14 @@ import datetime
 import email
 from email.iterators import typed_subpart_iterator
 import getopt
-import imaplib
 import logging
 import math
 import os
 import pickle
 import random
+import re
 import readline
+import ssl
 import string
 import subprocess
 import sys
@@ -82,26 +83,29 @@ import threading
 import time
 import tkinter
 
-import dateutil.parser
+import imapclient
 
 PROG = os.path.split(sys.argv[0])[1]
 
 LOG_FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
 
-DFLT_DATE = datetime.datetime(2014, 8, 1, 0, 0, 0)
+PUNCT = set(string.punctuation)
+UPPER = set(string.ascii_uppercase)
+LOWER = set(string.ascii_lowercase)
+DIGITS = set(string.digits)
+
 class Polly:
     "Workhorse of the system."
     def __init__(self, options):
         self.reader = None
         self.options = options
-        self.punct = set(string.punctuation)
-        self.digits = set(string.digits)
         self.msg_ids = set()
         self.words = {}
         self.emitted = set()
         self.bad = set()
         self.uids = set()
-        self.log = logging.getLogger(__name__)
+        self.log = logging.getLogger("polly")
+        self.log.setLevel(options["verbose"])
         self.pfile = options["picklefile"]
         pkl_dir = os.path.dirname(self.pfile)
         self.bfile = os.path.join(pkl_dir, "polly.bad")
@@ -155,8 +159,11 @@ class Polly:
         # Randomize the selected words a bit.
         self.tweak(words)
 
-        extras = self.punct if self.options["punctuation"] else set()
-        extras |= self.digits if self.options["digits"] else set()
+        extras = set()
+        if self.options["punctuation"]:
+            extras |= PUNCT
+        if self.options["digits"]:
+            extras |= DIGITS
         extras = sorted(extras)
         if not extras:
             extras = [" "]
@@ -172,8 +179,11 @@ class Polly:
         Probability of tweakage goes up as the number of words is reduced.
         """
         length = len(words)
-        extras = self.punct if self.options["punctuation"] else set()
-        extras |= self.digits if self.options["digits"] else set()
+        extras = set()
+        if self.options["punctuation"]:
+            extras |= PUNCT
+        if self.options["digits"]:
+            extras |= DIGITS
         extras = sorted(extras)
         for (i, word) in enumerate(words):
             word = list(words[i])
@@ -209,7 +219,7 @@ class Polly:
         if not os.path.exists(dictfile):
             self.log.error("%r does not exist", dictfile)
             return
-        upper_and_punct = self.punct | set(string.ascii_uppercase)
+        upper_and_punct = PUNCT | UPPER
         with open(dictfile) as dictfp:
             raw = [w.strip()
                      for w in dictfp
@@ -265,11 +275,19 @@ class Polly:
 
     def process_text(self, text):
         "must be called inside a 'with' statement."
-        self.consider_words(set(text.split()))
+        return self.consider_words(set(text.split()))
 
     def consider_words(self, candidates):
-        lowercase = set(string.ascii_lowercase)
-        for word in candidates:
+        lowercase = LOWER
+        html = set()
+        nwords = len(self.emitted)
+        for raw in candidates:
+            word = re.sub(r"</?[^ >]+>\s*", "", raw)
+            if not word:
+                # word was an HTML tag.
+                self.log.debug("HTML: %s", raw)
+                html.add(raw)
+                continue
             wset = set(word)
             # Though we live in a Unicode world, I really only want stuff
             # *I* can type as a password, so restrict words to ASCII
@@ -288,6 +306,7 @@ class Polly:
                 min_index = len(self.words) - self.options["nwords"]
                 if counts.index(self.words[word]) >= min_index:
                     self.emitted.add(word)
+        return (len(self.emitted) - nwords, len(html))
 
     def print_statistics(self):
         "Print some summary details."
@@ -318,31 +337,32 @@ class Polly:
             while True:
                 prompt = "? " if self.options["prompt"] else ""
                 try:
-                    command = input(prompt)
+                    command = input(prompt).strip()
                 except EOFError:
                     break
-                command = command.strip()
                 if not command:
                     continue
                 try:
                     command, rest = command.split(None, 1)
                 except ValueError:
                     rest = ""
+                simple = {
+                    "read": self.start_reader,
+                    "stat": self.print_statistics,
+                    "rebuild": self.rebuild,
+                    "save": self.save_pfile,
+                    "help": usage,
+                    "?": usage,
+                }
                 with self:
+                    simplefunc = simple.get(command)
+                    if simplefunc is not None:
+                        simplefunc()
+                        continue
                     if command == "password":
                         self.generate_passwords(int(rest) if rest else 1)
-                    elif command == "read":
-                        self.start_reader()
-                    elif command == "stat":
-                        self.print_statistics()
-                    elif command == "rebuild":
-                        self.rebuild()
-                    elif command == "save":
-                        self.save_pfile()
                     elif command == "exit":
                         break
-                    elif command in ("help", "?"):
-                        usage()
                     elif command == "bad":
                         for word in rest.split():
                             self.bad_polly(word)
@@ -353,6 +373,23 @@ class Polly:
                         dictfile, nwords = rest.split()
                         nwords = int(nwords)
                         self.add_words(dictfile, nwords)
+                    elif command == "option":
+                        if not rest.strip():
+                            for option in sorted(self.options):
+                                print(f"option {option} {self.options[option]}")
+                        else:
+                            option, value = rest.split()
+                            if option == "verbose":
+                                self.options["verbose"] = value.upper()
+                                self.log.setLevel(self.options["verbose"])
+                            elif option in ("length", "maxchars", "nwords"):
+                                self.options[option] = int(value)
+                            elif option in ("digits", "punctuation", "upper"):
+                                value = value.lower()
+                                assert value in ("true", "false")
+                                self.options[option] = value == "true"
+                            else:
+                                self.log.error("Don't know how to set option %r", option)
                     else:
                         self.log.error("Unrecognized command %r", command)
         except KeyboardInterrupt:
@@ -366,12 +403,12 @@ class Polly:
         if (len(self.emitted) > nwords and
             len(self.words) > nwords):
             self.log.info("Using %d most common words.", nwords)
-        self.log.debug("Punctuation? %s Digits? %s",
+        self.log.debug("Punctuation? %s Digits? %s Upper? %s",
                        self.options["punctuation"],
-                       self.options["digits"])
+                       self.options["digits"],
+                       self.options["upper"])
         for _ in range(count):
             passwd = self.get_password()
-            print(repr(passwd), file=sys.stderr)
             sys.stdout.write(passwd+"\n")
             sys.stdout.flush()
 
@@ -384,97 +421,67 @@ class Polly:
         with self:
             options = self.options.copy()
             msg_ids = self.msg_ids.copy()
-            seen_uids = self.uids
+            seen_uids = self.uids.copy()
+
+        ssl_context = ssl.create_default_context()
+        # don't check if certificate hostname doesn't match target hostname
+        ssl_context.check_hostname = False
+        # don't check if the certificate is trusted by a certificate authority
+        ssl_context.verify_mode = ssl.CERT_NONE
 
         # Reference the verbose parameter through the options dict so the
         # user can toggle the setting on-the-fly.
-        with IMAP(options["server"]) as mail:
+        with imapclient.IMAPClient(options["server"], use_uid=True,
+                                   ssl_context=ssl_context) as server:
             try:
-                mail.login(options["user"], options["password"])
-            except IMAP.error:
+                server.login(options["user"], options["password"])
+            except imapclient.exceptions.IMAPClientError:
                 self.log.error("login failed. check your credentials.")
                 return
             self.log.debug("login successful.")
-            (result, data) = mail.select(options["folder"])
-            if result != "OK":
-                self.log.warning("failed to select folder %r.", options["folder"])
-                return
-            self.log.debug("select folder %r.", options["folder"])
+            info = server.select_folder(options["folder"])
+            self.log.debug("select folder %r.", info)
 
-            nhdrs = nmsgs = nnew = 0
+            nmsgs = nnew = 0
             start = datetime.datetime.now()-datetime.timedelta(days=50)
-            stamp = start.strftime("%d-%b-%Y")
-            constraint = "(SENTSINCE %s)" % stamp
-            try:
-                result, data = mail.uid('search', None, constraint)
-            except IMAP.error:
-                self.log.error("failed to search for constraint: %s", constraint)
-                return
-            else:
-                if result != "OK":
-                    self.log.error("failed to search for constraint: %s", constraint)
-                    return
-
-            uids = set(data[0].split()) - seen_uids
-            self.log.info("search successful - %d new uids returned.", len(uids))
-            if uids:
-                self.log.debug("Will process %d uids", len(uids))
+            uids = server.search(["SINCE", start])
+            uids = set(uids) - seen_uids
+            self.log.info("%d new UIDs returned.", len(uids))
             for uid in uids:
                 seen_uids.add(uid)
-                # First, check the message-id to see if we've already seen it.
-                result, data = mail.fetch(uid, "(BODY[HEADER.FIELDS (MESSAGE-ID)])")
-                if result != "OK":
-                    self.log.error("failed to fetch headers.")
-                    return
-
-                nhdrs += 1
-                try:
-                    message = email.message_from_string(data[0][1])
-                except TypeError:
+                result = server.fetch([uid], [b'RFC822'])
+                msg = email.message_from_bytes(result[uid][b"RFC822"])
+                msg_id = msg["Message-ID"].strip()
+                if msg_id in msg_ids:
+                    # Already processed
                     continue
-                msg_id = message.get("Message-ID")
-                if msg_id is None or msg_id in msg_ids:
-                    continue
+                self.log.debug("UID: %s, Message-ID: %r", uid, msg_id)
                 msg_ids.add(msg_id)
-                self.log.debug("New message id: %s", msg_id)
 
-                # Okay, we haven't seen this message yet. Process its text
-                # (well, the first text part we come across).
+                # We haven't seen this message yet. Process its text
+                # (well, the first text/plain part or the plain text of
+                # the first text/html part we come across).
                 nmsgs += 1
-                result, data = mail.fetch(uid, "(RFC822 BODY.PEEK[])")
-                if result != "OK":
-                    self.log.error("failed to fetch body.")
-                    return
-                try:
-                    message = email.message_from_string(data[0][1])
-                except TypeError:
-                    continue
-                text = get_body(message)
+                text = get_body(msg)
                 if not text:
                     continue
 
                 nnew += 1
                 with self:
-                    self.process_text(text)
+                    nwords, nhtml = self.process_text(text)
+                    if nwords or nhtml:
+                        self.log.debug("%d new words from %s (%d HTML tags).",
+                                       nwords, msg_id, nhtml)
 
-                if nnew % 10 == 0:
-                    self.log.info("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+                if nnew % 100 == 0:
+                    self.log.warning("msgs: %d new: %d", nmsgs, nnew)
                     with self:
                         self.msg_ids = msg_ids.copy()
                         self.uids = seen_uids.copy()
-                # Remember the date for the next time.
-                msg_date = message.get("Date")
-                if msg_date is None:
-                    msg_date = DFLT_DATE
-                else:
-                    try:
-                        msg_date = dateutil.parser.parse(msg_date)
-                        msg_date = msg_date.replace(tzinfo=None)
-                    except (ValueError, TypeError):
-                        self.log.warning("Invalid date string: %r", msg_date)
-                        msg_date = DFLT_DATE
+                elif nnew % 10 == 0:
+                    self.log.info("msgs: %d new: %d", nmsgs, nnew)
 
-            self.log.info("hdrs: %d msgs: %d new: %d", nhdrs, nmsgs, nnew)
+            self.log.warning("Finished. msgs: %d new: %d", nmsgs, nnew)
             with self:
                 self.msg_ids = msg_ids.copy()
                 self.uids = seen_uids.copy()
@@ -486,60 +493,7 @@ def usage(msg=""):
         print(file=sys.stderr)
     print(__doc__ % globals(), file=sys.stderr)
 
-def main(args):
-    "Where it all starts."
-    options = {
-        "server": None,
-        "user": None,
-        "password": None,
-        "folder": None,
-        "length": None,
-        "nwords": None,
-        "verbose": None,
-        "digits": None,
-        "punctuation": None,
-        "upper": None,
-        "minchars": None,
-        "maxchars": None,
-        "editing-mode": None,
-        "hash": None,
-        "prompt": None,
-        "gui": None,
-        "unittests": None,
-        "picklefile": None,
-        }
-    getters = {
-        "server": "get",
-        "user": "get",
-        "password": "get",
-        "prompt": "get",
-        "folder": "get",
-        "length": "getint",
-        "nwords": "getint",
-        "verbose": "get",
-        "digits": "getboolean",
-        "punctuation": "getboolean",
-        "upper": "getboolean",
-        "minchars": "getint",
-        "maxchars": "getint",
-        "editing-mode": "get",
-        "hash": "getboolean",
-        "gui": "getboolean",
-        "unittests": "getboolean",
-        "picklefile": "get",
-        }
-
-    argstring = "s:u:p:f:c:g:HhL:Gn"
-    # Process the command line args once to locate any config file
-    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
-    for opt, arg in opts:
-        if opt == "-c":
-            configfile = arg
-        elif opt in ("-h", "--help"):
-            usage()
-            return 0
-
-    log_level = logging.FATAL
+def read_config(configfile, options):
     if configfile is not None:
         # Fill in what wasn't given on the command line.
         config = RawConfigParser()
@@ -547,7 +501,7 @@ def main(args):
         for key in options:
             if options[key] is None:
                 try:
-                    value = getattr(config, getters[key])("Polly", key)
+                    value = getattr(config, GETTERS[key])("Polly", key)
                 except NoOptionError:
                     pass
                 else:
@@ -594,12 +548,65 @@ def main(args):
             pfile = os.path.join(os.getcwd(), "polly.pkl")
             options["picklefile"] = pfile
         options["picklefile"] = os.path.abspath(options["picklefile"])
-        if not os.path.exists(options["picklefile"]):
-            raise ValueError("Can't read {}".format(options["picklefile"]))
 
-    # if None in options.values():
-    #     usage("Server, user, password and folder are all required.")
-    #     return 1
+GETTERS = {
+    "server": "get",
+    "user": "get",
+    "password": "get",
+    "prompt": "get",
+    "folder": "get",
+    "length": "getint",
+    "nwords": "getint",
+    "verbose": "get",
+    "digits": "getboolean",
+    "punctuation": "getboolean",
+    "upper": "getboolean",
+    "minchars": "getint",
+    "maxchars": "getint",
+    "editing-mode": "get",
+    "hash": "getboolean",
+    "gui": "getboolean",
+    "unittests": "getboolean",
+    "picklefile": "get",
+    }
+
+def main(args):
+    "Where it all starts."
+
+    options = {
+        "server": None,
+        "user": None,
+        "password": None,
+        "folder": None,
+        "length": None,
+        "nwords": None,
+        "verbose": None,
+        "digits": None,
+        "punctuation": None,
+        "upper": None,
+        "minchars": None,
+        "maxchars": None,
+        "editing-mode": None,
+        "hash": None,
+        "prompt": None,
+        "gui": None,
+        "unittests": None,
+        "picklefile": None,
+        }
+
+    argstring = "s:u:p:f:c:g:HhL:Gn"
+    # Process the command line args once to locate any config file
+    opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
+    configfile = None
+    for opt, arg in opts:
+        if opt == "-c":
+            configfile = arg
+        elif opt in ("-h", "--help"):
+            usage()
+            return 0
+
+    log_level = logging.FATAL
+    read_config(configfile, options)
 
     generate_n = 0
     opts, _args = getopt.getopt(args, argstring, ["gui", "help"])
@@ -631,7 +638,7 @@ def main(args):
         if log_level == -99:
             raise ValueError("Invalid log level %r" % options["verbose"])
 
-    logging.basicConfig(level=log_level, format=LOG_FORMAT, force=True)
+    logging.basicConfig(format=LOG_FORMAT, force=True)
 
     polly = Polly(options)
 
@@ -658,8 +665,6 @@ def main(args):
 
     try:
         polly.get_commands()
-    except KeyboardInterrupt:
-        pass
     finally:
         if not options["gui"]:
             polly.save_pfile()
@@ -683,6 +688,7 @@ def run_gui(args):
     root.destroy()
     pipe.kill()
 
+# pylint: disable=too-many-ancestors
 class Application(tkinter.Frame):
     "Tk GUI."
     def __init__(self, pipe, master=None):
@@ -711,16 +717,6 @@ class Application(tkinter.Frame):
         self.exit.pack(side=tkinter.TOP)
         self.exit["command"] = self.quit
 
-class IMAP(imaplib.IMAP4_SSL):
-    def __init__(self, server):
-        imaplib.IMAP4_SSL.__init__(self, server)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        self.logout()
-
 # get_charset and get_body are from:
 #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
 
@@ -741,12 +737,14 @@ def get_body(message):
     if message.is_multipart():
         #get the plain text version only
         body = []
-        for part in typed_subpart_iterator(message, 'text', 'plain'):
-            charset = get_charset(part, get_charset(message))
-            body.append(str(part.get_payload(decode=True),
-                                charset,
-                                "replace"))
-
+        # MIME type order is important here...
+        for (type_, subtype) in (("text", "plain"), ("text", "html")):
+            for part in typed_subpart_iterator(message, type_, subtype):
+                charset = get_charset(part, get_charset(message))
+                body.append(str(part.get_payload(decode=True), charset, "replace"))
+            if body:
+                # Done if we got something for text/plain...
+                break
         return "\n".join(body).strip()
 
     # if it is not multipart, the payload will be a string
