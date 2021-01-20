@@ -48,7 +48,8 @@ Commands
 add dictfile n - add n random words from dictfile
 bad word ...   - mark one or more words as bad
 dict dictfile  - report words not present in dictfile
-exit           - quit the program
+exit/quit/^D   - quit the program
+good dictfile  - declare the words contained as unconditionally "good"
 help or ?      - print this help
 password [n]   - generate n passwords (default 1)
 read           - read messages from the IMAP server in a second thread
@@ -104,6 +105,7 @@ class Polly:
         self.emitted = set()
         self.bad = set()
         self.uids = set()
+        self.good_words = set()
         self.log = logging.getLogger("polly")
         self.log.setLevel(options["verbose"])
         self.pfile = options["picklefile"]
@@ -203,7 +205,12 @@ class Polly:
         self.emitted.discard(word)
 
     def get_not_words(self, dictfile):
-        "Retrieve word-like things which aren't really words."
+        """Retrieve word-like things which might not really be words.
+
+        dictfile is our authority.  We return any in self.emitted
+        which don't appear in dictfile, minus any in our set of explicitly good words
+
+        """
         if not os.path.exists(dictfile):
             self.log.error("%r does not exist", dictfile)
             return []
@@ -212,7 +219,7 @@ class Polly:
             dict_words = set(raw)
             for suffix in ("ing", "ed", "es", "s", "ies"):
                 dict_words |= {w+suffix for w in raw}
-            return sorted(self.emitted - dict_words)
+            return sorted(self.emitted - dict_words - self.good_words)
 
     def add_words(self, dictfile, nwords):
         "Add words to our collection."
@@ -361,7 +368,7 @@ class Polly:
                         continue
                     if command == "password":
                         self.generate_passwords(int(rest) if rest else 1)
-                    elif command == "exit":
+                    elif command in ("exit", "quit"):
                         break
                     elif command == "bad":
                         for word in rest.split():
@@ -373,6 +380,10 @@ class Polly:
                         dictfile, nwords = rest.split()
                         nwords = int(nwords)
                         self.add_words(dictfile, nwords)
+                    elif command == "good":
+                        dictfile = rest
+                        good = set(word.strip() for word in open(dictfile))
+                        self.good_words |= good
                     elif command == "option":
                         if not rest.strip():
                             for option in sorted(self.options):
@@ -380,14 +391,26 @@ class Polly:
                         else:
                             option, value = rest.split()
                             if option == "verbose":
-                                self.options["verbose"] = value.upper()
+                                value = value.upper()
+                                assert hasattr(logging, value)
+                                self.options["verbose"] = value
                                 self.log.setLevel(self.options["verbose"])
-                            elif option in ("length", "maxchars", "nwords"):
+                            elif option in ("length", "maxchars", "nwords", "maxchars",
+                                            "minchars"):
                                 self.options[option] = int(value)
-                            elif option in ("digits", "punctuation", "upper"):
+                            elif option in ("digits", "punctuation", "upper", "hash", "prompt",
+                                            "unittests"):
                                 value = value.lower()
                                 assert value in ("true", "false")
                                 self.options[option] = value == "true"
+                            elif option == "editing-mode":
+                                value = value.lower()
+                                assert value in ("emacs", "vi")
+                                self.options[option] = value
+                            elif option == "folder":
+                                self.options[option] = value
+                            elif option == "gui":
+                                self.log.error("GUI mode must be set at startup.")
                             else:
                                 self.log.error("Don't know how to set option %r", option)
                     else:
