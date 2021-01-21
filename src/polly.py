@@ -720,6 +720,14 @@ def main(args):
             usage()
             return 0
 
+    try:
+        with open(configfile) as _cfg:
+            pass
+    except OSError:
+        log = logging.getLogger("polly")
+        log.fatal("Config file %s does not exist or is not readable.", configfile)
+        return 1
+
     log_level = logging.FATAL
     read_config(configfile, options)
 
@@ -782,4 +790,4 @@ def main(args):
     return 0
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))
