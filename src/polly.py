@@ -31,6 +31,7 @@ nwords         - n common words to use when considering candidates
 verbose        - set to string value of log level (default FATAL)
 punctuation    - when True, allow punctuation between words (default False)
 digits         - when True, allow digits between words (default False)
+lookback       - number of days to look back for messages (default 50)
 minchars       - length of shortest word to use when generating passwords
                  (default 3)
 maxchars       - length of longest word to use when generating passwords
@@ -66,6 +67,7 @@ import datetime
 import email
 from email.iterators import typed_subpart_iterator
 import getopt
+import imaplib
 import logging
 import math
 import os
@@ -313,15 +315,15 @@ class Polly:
 
     def print_statistics(self):
         "Print some summary details."
-        print("message ids:", len(self.msg_ids))
-        print("all words:", len(self.words))
-        print("common words:", len(self.emitted), end=' ')
+        print(f"message ids: {len(self.msg_ids)}")
+        print(f"all words: {len(self.words)}")
+        print(f"common words: {len(self.emitted)}", end=' ')
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
-        print("entropy:", "%.2f" % bits, "bits")
-        print("'bad' words:", len(self.bad))
-        print("seen uids:", len(self.uids), end=' ')
+        print(f"entropy: {bits:.3f} bits")
+        print(f"'bad' words: {len(self.bad)}")
+        print(f"seen uids: {len(self.uids)}", end=' ')
         if self.uids:
-            print(min(self.uids), "->", max(self.uids), end=' ')
+            print(f"{min(self.uids)} -> {max(self.uids)}", end=' ')
         print()
 
     def start_reader(self):
@@ -392,7 +394,7 @@ class Polly:
                                 self.options["verbose"] = value
                                 self.log.setLevel(self.options["verbose"])
                             elif option in ("length", "maxchars", "nwords", "maxchars",
-                                            "minchars"):
+                                            "minchars", "lookback"):
                                 self.options[option] = int(value)
                             elif option in ("digits", "punctuation", "upper", "hash", "prompt",
                                             "unittests"):
@@ -460,13 +462,18 @@ class Polly:
             self.log.debug("select folder %r.", info)
 
             nmsgs = nnew = 0
-            start = datetime.datetime.now()-datetime.timedelta(days=50)
+            self.log.debug("look back %d days.", options["lookback"])
+            start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
             uids = server.search(["SINCE", start])
             uids = set(uids) - seen_uids
             self.log.info("%d new UIDs returned.", len(uids))
             for uid in uids:
                 seen_uids.add(uid)
-                result = server.fetch([uid], [b'RFC822'])
+                try:
+                    result = server.fetch([uid], [b'RFC822'])
+                except imaplib.IMAP4.abort as abt:
+                    self.log.error("%s uid=%s", abt, uid)
+                    raise
                 msg = email.message_from_bytes(result[uid][b"RFC822"])
                 msg_id = msg["Message-ID"].strip()
                 if msg_id in msg_ids:
@@ -479,7 +486,7 @@ class Polly:
                 # (well, the first text/plain part or the plain text of
                 # the first text/html part we come across).
                 nmsgs += 1
-                text = get_body(msg)
+                text = self.get_body(msg)
                 if not text:
                     continue
 
@@ -502,6 +509,95 @@ class Polly:
             with self:
                 self.msg_ids = msg_ids.copy()
                 self.uids = seen_uids.copy()
+
+    # get_charset and get_body are adapted from:
+    #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
+
+    # pylint: disable=no-self-use
+    def get_charset(self, message, default="ascii"):
+        """Get the message charset"""
+
+        charset = (message.get_content_charset() or
+                   message.get_charset() or
+                   default)
+        return charset
+
+    def get_body(self, message):
+        """Get the body of the email message"""
+
+        if message.is_multipart():
+            #get the plain text version only
+            body = []
+            # MIME type order is important here...
+            for (type_, subtype) in (("text", "plain"), ("text", "html")):
+                for part in typed_subpart_iterator(message, type_, subtype):
+                    charset = self.get_charset(part, self.get_charset(message))
+                    payload = str(part.get_payload(decode=True), charset, "replace")
+                    self.log.trace("%s/%s charset: %s, payload: %s...",
+                                   type_, subtype, charset, payload[0:60])
+                    body.append(payload)
+                if body:
+                    # Done if we got something for text/plain...
+                    break
+            return "\n".join(body).strip()
+
+        # if it is not multipart, the payload will be a string
+        # representing the message body
+        body = str(message.get_payload(decode=True),
+                   self.get_charset(message),
+                   "replace")
+        return body.strip()
+
+# Adapted from: https://stackoverflow.com/questions/2183233/
+def add_log_level(name, num, methodname=None):
+    """
+    Comprehensively adds a new logging level to the `logging` module and the
+    currently configured logging class.
+
+    `name` becomes an attribute of the `logging` module with the value
+    `num`. `methodname` becomes a convenience method for both `logging`
+    itself and the class returned by `logging.getLoggerClass()` (usually just
+    `logging.Logger`). If `methodname` is not specified, `name.lower()` is
+    used.
+
+    To avoid accidental clobberings of existing attributes, this method will
+    raise an `AttributeError` if the level name is already an attribute of the
+    `logging` module or if the method name is already present
+
+    Example
+    -------
+    >>> addLoggingLevel('TRACE', logging.DEBUG - 5)
+    >>> logging.getLogger(__name__).setLevel("TRACE")
+    >>> logging.getLogger(__name__).trace('that worked')
+    >>> logging.trace('so did this')
+    >>> logging.TRACE
+    5
+
+    """
+    if methodname is None:
+        methodname = name.lower()
+
+    if hasattr(logging, name):
+        raise AttributeError(f'{name} already defined in logging module')
+    if hasattr(logging, methodname):
+        raise AttributeError(f'{methodname} already defined in logging module')
+    if hasattr(logging.getLoggerClass(), methodname):
+        raise AttributeError(f'{methodname} already defined in logger class')
+
+    # This method was inspired by the answers to Stack Overflow post
+    # http://stackoverflow.com/q/2183233/2988730, especially
+    # http://stackoverflow.com/a/13638084/2988730
+    def log_for_level(self, message, *args, **kwargs):
+        if self.isEnabledFor(num):
+            # pylint: disable=protected-access
+            self._log(num, message, args, **kwargs)
+    def log_to_root(message, *args, **kwargs):
+        logging.log(num, message, *args, **kwargs)
+
+    logging.addLevelName(num, name)
+    setattr(logging, name, num)
+    setattr(logging.getLoggerClass(), methodname, log_for_level)
+    setattr(logging, methodname, log_to_root)
 
 def usage(msg=""):
     "User help."
@@ -537,6 +633,9 @@ def read_config(configfile, options):
         if options["minchars"] is None:
             options["minchars"] = 3
 
+        if options["lookback"] is None:
+            options["lookback"] = 50
+
         if options["punctuation"] is None:
             options["punctuation"] = True
 
@@ -570,6 +669,7 @@ GETTERS = {
     "prompt": "get",
     "folder": "get",
     "length": "getint",
+    "lookback": "getint",
     "nwords": "getint",
     "verbose": "get",
     "digits": "getboolean",
@@ -586,12 +686,15 @@ GETTERS = {
 def main(args):
     "Where it all starts."
 
+    add_log_level("TRACE", logging.DEBUG - 5)
+
     options = {
         "server": None,
         "user": None,
         "password": None,
         "folder": None,
         "length": None,
+        "lookback": None,
         "nwords": None,
         "verbose": None,
         "digits": None,
@@ -677,43 +780,6 @@ def main(args):
         polly.save_pfile()
 
     return 0
-
-# get_charset and get_body are from:
-#  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
-
-def get_charset(message, default="ascii"):
-    """Get the message charset"""
-
-    if message.get_content_charset():
-        return message.get_content_charset()
-
-    if message.get_charset():
-        return message.get_charset()
-
-    return default
-
-def get_body(message):
-    """Get the body of the email message"""
-
-    if message.is_multipart():
-        #get the plain text version only
-        body = []
-        # MIME type order is important here...
-        for (type_, subtype) in (("text", "plain"), ("text", "html")):
-            for part in typed_subpart_iterator(message, type_, subtype):
-                charset = get_charset(part, get_charset(message))
-                body.append(str(part.get_payload(decode=True), charset, "replace"))
-            if body:
-                # Done if we got something for text/plain...
-                break
-        return "\n".join(body).strip()
-
-    # if it is not multipart, the payload will be a string
-    # representing the message body
-    body = str(message.get_payload(decode=True),
-               get_charset(message),
-               "replace")
-    return body.strip()
 
 if __name__ == "__main__":
     main(sys.argv[1:])
