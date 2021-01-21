@@ -534,7 +534,7 @@ class Polly:
                     charset = self.get_charset(part, self.get_charset(message))
                     payload = str(part.get_payload(decode=True), charset, "replace")
                     self.log.trace("%s/%s charset: %s, payload: %s...",
-                                   type_, subtype, charset, payload[0:60])
+                                   type_, subtype, charset, payload[0:50])
                     body.append(payload)
                 if body:
                     # Done if we got something for text/plain...
