@@ -2,15 +2,17 @@
 
 """polly - build a corpus from an IMAP folder and use it to generate passwords.
 
-usage: %(PROG)s -s server -u user -p password -f folder [ -g N [ -H what ] ] \
-        [ -c config ] [ -L level ]
+usage: %(PROG)s args ...
 
-The server, user, password and folder flags are required unless they
-are specified in the config file.  If the -g flag is given, polly will
-print N passwords, then exit without starting a command loop. If the
--c flag is given, options are read from the named config file. The -s,
--u, -p, and -f flags take precedence over the values defined in the
-config file. The -L option is used to control the logging level.
+Note that command line args are processed in order, so later args will
+override earlier. In particular, you probably want to specify the
+config file (-c flag) earlier so you can override values it contains
+from the command line.
+
+If the -g flag is given, polly will print N passwords, then exit
+without starting a command loop. If the -c flag is given, options are
+read from the named config file.  The -L option is used to control the
+logging level.
 
 When generating passwords, you can specify that they are to be hashed
 using the -H flag. You must also give the type of hash to use. Any
@@ -58,11 +60,12 @@ stat           - print some simple statistics about the collected words
 verbose        - toggle verbose flag
 
 Readline support is enabled, with input history saved in ~/.polly.rc.
+
 """
 
 import atexit
 import binascii
-from configparser import RawConfigParser, NoOptionError
+import configparser
 import datetime
 import email
 from email.iterators import typed_subpart_iterator
@@ -219,8 +222,26 @@ class Polly:
                 dict_words |= {w+suffix for w in raw}
             return sorted(self.emitted - dict_words - self.good_words)
 
-    def add_words(self, dictfile, nwords):
+    def add_bad_words(self, arg):
+        "Extend list of bad words."
+        for word in arg.split():
+            self.bad_polly(word)
+
+    def check_dict(self, arg):
+        "Check dictionary for missing words."
+        not_really_words = " ".join(self.get_not_words(arg))
+        print(textwrap.fill(not_really_words))
+
+    def add_good_words(self, arg):
+        "Extend list of explicitly good words."
+        dictfile = arg
+        good = set(word.strip() for word in open(dictfile))
+        self.good_words |= good
+
+    def add_words(self, arg):
         "Add words to our collection."
+        dictfile, nwords = arg.split()
+        nwords = int(nwords)
         if not os.path.exists(dictfile):
             self.log.error("%r does not exist", dictfile)
             return
@@ -242,7 +263,7 @@ class Polly:
                     # good set.
                     self.consider_words(candidates)
 
-    def rebuild(self):
+    def rebuild(self, _arg):
         "Rebuild self.emitted from self.words."
         counts = sorted([(self.words[w], w)
                              for w in self.words if w not in self.bad])
@@ -266,7 +287,7 @@ class Polly:
             with open(self.bfile) as bfile:
                 self.bad |= {w.strip() for w in bfile}
 
-    def save_pfile(self):
+    def save_pfile(self, _arg):
         "Write state to pickle file."
         with open(self.pfile, "wb") as pfile:
             pickle.dump((self.msg_ids, self.words, self.emitted, self.uids), pfile)
@@ -283,6 +304,7 @@ class Polly:
         return self.consider_words(set(text.split()))
 
     def consider_words(self, candidates):
+        "Filter out tokens which are non-ascii or look like HTML tags."
         lowercase = LOWER
         html = set()
         nwords = len(self.emitted)
@@ -313,7 +335,7 @@ class Polly:
                     self.emitted.add(word)
         return (len(self.emitted) - nwords, len(html))
 
-    def print_statistics(self):
+    def print_statistics(self, _arg):
         "Print some summary details."
         print(f"message ids: {len(self.msg_ids)}")
         print(f"all words: {len(self.words)}")
@@ -326,7 +348,7 @@ class Polly:
             print(f"{min(self.uids)} -> {max(self.uids)}", end=' ')
         print()
 
-    def start_reader(self):
+    def start_reader(self, _arg):
         "Fire up the IMAP reader thread."
         if self.reader is None or not self.reader.is_alive():
             self.log.debug("starting IMAP thread.")
@@ -337,7 +359,22 @@ class Polly:
             self.reader.start()
 
     def get_commands(self):
-        "Reader loop."
+        "Command loop."
+        # Add new commands here as a method which takes a single argument.
+        commands = {
+            "read": self.start_reader,
+            "stat": self.print_statistics,
+            "rebuild": self.rebuild,
+            "save": self.save_pfile,
+            "help": usage,
+            "?": usage,
+            "password": self.generate_passwords,
+            "bad": self.add_bad_words,
+            "dict": self.check_dict,
+            "add": self.add_words,
+            "good": self.add_good_words,
+            "option": self.process_option,
+        }
         try:
             while True:
                 prompt = "? " if self.options["prompt"] else ""
@@ -348,76 +385,55 @@ class Polly:
                 if not command:
                     continue
                 try:
-                    command, rest = command.split(None, 1)
+                    command, arg = command.split(None, 1)
                 except ValueError:
-                    rest = ""
-                simple = {
-                    "read": self.start_reader,
-                    "stat": self.print_statistics,
-                    "rebuild": self.rebuild,
-                    "save": self.save_pfile,
-                    "help": usage,
-                    "?": usage,
-                }
+                    arg = ""
+                if command in ("exit", "quit"):
+                    break
+
                 with self:
-                    simplefunc = simple.get(command)
-                    if simplefunc is not None:
-                        simplefunc()
+                    cmdfunc = commands.get(command)
+                    if cmdfunc is not None:
+                        cmdfunc(arg)
                         continue
-                    if command == "password":
-                        self.generate_passwords(int(rest) if rest else 1)
-                    elif command in ("exit", "quit"):
-                        break
-                    elif command == "bad":
-                        for word in rest.split():
-                            self.bad_polly(word)
-                    elif command == "dict":
-                        not_really_words = " ".join(self.get_not_words(rest))
-                        print(textwrap.fill(not_really_words))
-                    elif command == "add":
-                        dictfile, nwords = rest.split()
-                        nwords = int(nwords)
-                        self.add_words(dictfile, nwords)
-                    elif command == "good":
-                        dictfile = rest
-                        good = set(word.strip() for word in open(dictfile))
-                        self.good_words |= good
-                    elif command == "option":
-                        if not rest.strip():
-                            for option in sorted(self.options):
-                                print(f"option {option} {self.options[option]}")
-                        else:
-                            option, value = rest.split()
-                            if option == "verbose":
-                                value = value.upper()
-                                assert hasattr(logging, value)
-                                self.options["verbose"] = value
-                                self.log.setLevel(self.options["verbose"])
-                            elif option in ("length", "maxchars", "nwords", "maxchars",
-                                            "minchars", "lookback"):
-                                self.options[option] = int(value)
-                            elif option in ("digits", "punctuation", "upper", "hash", "prompt",
-                                            "unittests"):
-                                value = value.lower()
-                                assert value in ("true", "false")
-                                self.options[option] = value == "true"
-                            elif option == "editing-mode":
-                                value = value.lower()
-                                assert value in ("emacs", "vi")
-                                self.options[option] = value
-                            elif option == "folder":
-                                self.options[option] = value
-                            else:
-                                self.log.error("Don't know how to set option %r", option)
-                    else:
-                        self.log.error("Unrecognized command %r", command)
+                    self.log.error("Unrecognized command %r", command)
         except KeyboardInterrupt:
             pass
 
         self.log.info("Awk! Goodbye...")
 
-    def generate_passwords(self, count):
+    def process_option(self, arg):
+        "Show or set options."
+        if not arg.strip():
+            for option in sorted(self.options):
+                print(f"option {option} {self.options[option]}")
+        else:
+            option, value = arg.split()
+            if option == "verbose":
+                value = value.upper()
+                assert hasattr(logging, value)
+                self.options["verbose"] = value
+                self.log.setLevel(self.options["verbose"])
+            elif option in ("length", "maxchars", "nwords", "maxchars",
+                            "minchars", "lookback"):
+                self.options[option] = int(value)
+            elif option in ("digits", "punctuation", "upper", "hash", "prompt",
+                            "unittests"):
+                value = value.lower()
+                assert value in ("true", "false")
+                self.options[option] = value == "true"
+            elif option == "editing-mode":
+                value = value.lower()
+                assert value in ("emacs", "vi")
+                self.options[option] = value
+            elif option == "folder":
+                self.options[option] = value
+            else:
+                self.log.error("Don't know how to set option %r", option)
+
+    def generate_passwords(self, arg):
         "Generate COUNT passwords."
+        count = int(arg) if arg else 1
         nwords = self.options["nwords"]
         if (len(self.emitted) > nwords and
             len(self.words) > nwords):
@@ -432,11 +448,16 @@ class Polly:
             sys.stdout.flush()
 
     def read_imap(self):
-        while True:
-            self.read_loop()
-            time.sleep(600)
+        "Thread target."
+        try:
+            while True:
+                self.read_loop()
+                time.sleep(150)
+        finally:
+            self.reader = None
 
     def read_loop(self):
+        "Basic loop over IMAP connection."
         with self:
             options = self.options.copy()
             msg_ids = self.msg_ids.copy()
@@ -461,7 +482,7 @@ class Polly:
             info = server.select_folder(options["folder"])
             self.log.debug("select folder %r.", info)
 
-            nmsgs = nnew = 0
+            nnew = 0
             self.log.debug("look back %d days.", options["lookback"])
             start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
             uids = server.search(["SINCE", start])
@@ -485,7 +506,6 @@ class Polly:
                 # We haven't seen this message yet. Process its text
                 # (well, the first text/plain part or the plain text of
                 # the first text/html part we come across).
-                nmsgs += 1
                 text = self.get_body(msg)
                 if not text:
                     continue
@@ -498,14 +518,14 @@ class Polly:
                                        nwords, msg_id, nhtml)
 
                 if nnew % 100 == 0:
-                    self.log.warning("msgs: %d new: %d", nmsgs, nnew)
+                    self.log.warning("new msgs: %d", nnew)
                     with self:
                         self.msg_ids = msg_ids.copy()
                         self.uids = seen_uids.copy()
                 elif nnew % 10 == 0:
-                    self.log.info("msgs: %d new: %d", nmsgs, nnew)
+                    self.log.info("new msgs: %d", nnew)
 
-            self.log.warning("Finished. msgs: %d new: %d", nmsgs, nnew)
+            self.log.warning("Finished. new msgs: %d", nnew)
             with self:
                 self.msg_ids = msg_ids.copy()
                 self.uids = seen_uids.copy()
@@ -607,60 +627,18 @@ def usage(msg=""):
     print(__doc__ % globals(), file=sys.stderr)
 
 def read_config(configfile, options):
-    if configfile is not None:
-        # Fill in what wasn't given on the command line.
-        config = RawConfigParser()
-        config.read(configfile)
-        for key in options:
-            if options[key] is None:
-                try:
-                    value = getattr(config, GETTERS[key])("Polly", key)
-                except NoOptionError:
-                    pass
-                else:
-                    options[key] = value
-
-        # These can legitimately be unspecified.
-        if options["length"] is None:
-            options["length"] = 4
-
-        if options["nwords"] is None:
-            options["nwords"] = 2048
-
-        if options["maxchars"] is None:
-            options["maxchars"] = 999
-
-        if options["minchars"] is None:
-            options["minchars"] = 3
-
-        if options["lookback"] is None:
-            options["lookback"] = 50
-
-        if options["punctuation"] is None:
-            options["punctuation"] = True
-
-        if options["upper"] is None:
-            options["upper"] = True
-
-        if options["digits"] is None:
-            options["digits"] = True
-
-        if options["editing-mode"] is None:
-            options["editing-mode"] = "emacs"
-
-        if options["hash"] is None:
-            options["hash"] = False
-
-        if options["prompt"] is None:
-            options["prompt"] = True
-
-        if options["unittests"] is None:
-            options["unittests"] = False
-
-        if options["picklefile"] is None:
-            pfile = os.path.join(os.getcwd(), "polly.pkl")
-            options["picklefile"] = pfile
-        options["picklefile"] = os.path.abspath(options["picklefile"])
+    "Process sections in config file."
+    # Fill in what wasn't given on the command line.
+    config = configparser.RawConfigParser()
+    config.read(configfile)
+    for key in options:
+        if options[key] is None:
+            try:
+                value = getattr(config, GETTERS[key])("Polly", key)
+            except configparser.NoOptionError:
+                pass
+            else:
+                options[key] = value
 
 GETTERS = {
     "server": "get",
@@ -686,56 +664,53 @@ GETTERS = {
 def main(args):
     "Where it all starts."
 
+    # More verbose than DEBUG...
     add_log_level("TRACE", logging.DEBUG - 5)
 
+    # Options related to the IMAP connection have no default, hence
+    # None.  They must be specified on the command line or in the
+    # config file if you plan to chat with the server.
     options = {
-        "server": None,
-        "user": None,
-        "password": None,
+        "digits": True,
+        "editing-mode": "emacs",
         "folder": None,
-        "length": None,
-        "lookback": None,
-        "nwords": None,
-        "verbose": None,
-        "digits": None,
-        "punctuation": None,
-        "upper": None,
-        "minchars": None,
-        "maxchars": None,
-        "editing-mode": None,
-        "hash": None,
-        "prompt": None,
-        "unittests": None,
-        "picklefile": None,
+        "hash": False,
+        "length": 4,
+        "lookback": 50,
+        "maxchars": 999,
+        "minchars": 3,
+        "nwords": 2048,
+        "password": None,
+        "picklefile": os.path.join(os.getcwd(), "polly.pkl"),
+        "prompt": True,
+        "punctuation": True,
+        "server": None,
+        "unittests": False,
+        "upper": True,
+        "user": None,
+        "verbose": "FATAL",
         }
 
-    argstring = "s:u:p:f:c:g:HhL:n"
-    # Process the command line args once to locate any config file
-    opts, _args = getopt.getopt(args, argstring, ["help"])
+    generate_n = 0
     configfile = None
+    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:n", ["help"])
     for opt, arg in opts:
         if opt == "-c":
             configfile = arg
+            try:
+                with open(configfile) as _cfg:
+                    pass
+            except OSError:
+                log = logging.getLogger("polly")
+                log.fatal("Specified config file %s does not exist or is not readable.",
+                          configfile)
+                return 1
+            else:
+                read_config(configfile, options)
         elif opt in ("-h", "--help"):
             usage()
             return 0
-
-    try:
-        with open(configfile) as _cfg:
-            pass
-    except OSError:
-        log = logging.getLogger("polly")
-        log.fatal("Config file %s does not exist or is not readable.", configfile)
-        return 1
-
-    log_level = logging.FATAL
-    read_config(configfile, options)
-
-    generate_n = 0
-    opts, _args = getopt.getopt(args, argstring, ["help"])
-    for opt, arg in opts:
-        # Ignore -c and -h on this pass.a
-        if opt == "-u":
+        elif opt == "-u":
             options["user"] = arg
         elif opt == "-p":
             options["password"] = arg
@@ -751,11 +726,6 @@ def main(args):
             options["prompt"] = False
         elif opt == "-H":
             options["hash"] = True
-
-    if options["verbose"] is not None:
-        log_level = getattr(logging, options["verbose"].upper(), -99)
-        if log_level == -99:
-            raise ValueError("Invalid log level %r" % options["verbose"])
 
     logging.basicConfig(format=LOG_FORMAT, force=True)
 
@@ -785,7 +755,7 @@ def main(args):
     try:
         polly.get_commands()
     finally:
-        polly.save_pfile()
+        polly.save_pfile(None)
 
     return 0
 
