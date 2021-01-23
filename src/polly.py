@@ -411,21 +411,27 @@ class Polly:
             option, value = arg.split()
             if option == "verbose":
                 value = value.upper()
-                assert hasattr(logging, value)
-                self.options["verbose"] = value
-                self.log.setLevel(self.options["verbose"])
+                if hasattr(logging, value):
+                    self.options["verbose"] = value
+                    self.log.setLevel(self.options["verbose"])
+                else:
+                    self.log.error("%r is not a valid log level name", value)
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
                 self.options[option] = int(value)
             elif option in ("digits", "punctuation", "upper", "hash", "prompt",
                             "unittests"):
                 value = value.lower()
-                assert value in ("true", "false")
-                self.options[option] = value == "true"
+                if value in ("true", "false"):
+                    self.options[option] = value == "true"
+                else:
+                    self.log.error("%r is not in (true, false)", value)
             elif option == "editing-mode":
                 value = value.lower()
-                assert value in ("emacs", "vi")
-                self.options[option] = value
+                if value in ("emacs", "vi"):
+                    self.options[option] = value
+                else:
+                    self.log.error("%r is not in (emacs, vi)", value)
             elif option == "folder":
                 self.options[option] = value
             else:
