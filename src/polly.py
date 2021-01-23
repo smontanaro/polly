@@ -173,8 +173,11 @@ class Polly:
         for i in range(len(words)-1, 0, -1):
             self.rng.shuffle(extras)
             words[i:i] = extras[0]
-        words = "".join(words)
-        return words
+        passwd = "".join(words)
+        if self.options["hash"]:
+            passwd = "$dummy$" + str(binascii.hexlify(bytes(passwd, encoding="utf-8")),
+                                     encoding="utf-8")
+        return passwd
 
     def tweak(self, words):
         """Randomize the individual words a bit.
@@ -739,14 +742,8 @@ def main(args):
 
     # Just generate some passwords
     if generate_n:
-        if options["hash"]:
-            def encrypt(passwd):
-                return "$dummy$" + binascii.hexlify(passwd)
-        else:
-            encrypt = lambda passwd: passwd
-        with polly:
-            for _ in range(generate_n):
-                print(encrypt(polly.get_password()))
+        for _ in range(generate_n):
+            print(polly.get_password())
         return 0
 
     readline.parse_and_bind('tab: complete')
