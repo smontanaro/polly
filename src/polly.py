@@ -27,7 +27,7 @@ Options
 server         - the hostname of the IMAP server (required)
 user           - the login name on the IMAP server (required)
 password       - the password for the IMAP server (required)
-folder         - the folder to check for messages (required)
+folder         - comma-separated list of folder(s) to check for messages (required)
 nwords         - n common words to use when considering candidates
                  (default 2048)
 verbose        - set to string value of log level (default FATAL)
@@ -409,7 +409,10 @@ class Polly:
         "Show or set options."
         if not arg.strip():
             for option in sorted(self.options):
-                print(f"option {option} {self.options[option]}")
+                value = self.options[option]
+                if option == "folder":
+                    value = ",".join(value)
+                print(f"option {option} {value}")
         else:
             option, value = arg.split()
             if option == "verbose":
@@ -436,7 +439,7 @@ class Polly:
                 else:
                     self.log.error("%r is not in (emacs, vi)", value)
             elif option == "folder":
-                self.options[option] = value
+                self.options[option] = [f.strip() for f in value.split(",")]
             else:
                 self.log.error("Don't know how to set option %r", option)
 
@@ -469,8 +472,6 @@ class Polly:
         "Basic loop over IMAP connection."
         with self:
             options = self.options.copy()
-            msg_ids = self.msg_ids.copy()
-            seen_uids = self.uids.copy()
 
         ssl_context = ssl.create_default_context()
         # don't check if certificate hostname doesn't match target hostname
@@ -486,24 +487,38 @@ class Polly:
                 server.login(options["user"], options["password"])
             except imapclient.exceptions.IMAPClientError:
                 self.log.error("login failed. check your credentials.")
+                self.log.error("Exiting read loop early")
                 return
             self.log.debug("login successful.")
-            info = server.select_folder(options["folder"])
-            self.log.debug("select folder %r.", info)
+            nnew = 0
+            for folder in options["folder"]:
+                try:
+                    nnew += self.select_and_read(server, folder)
+                except imaplib.IMAP4.abort as abt:
+                    self.log.error("Server read error: %s", abt)
+                    self.log.error("Exiting read loop early")
+                    return
+            self.log.info("Finished. new msgs: %d", nnew)
+
+    def select_and_read(self, server, folder):
+        "Check folder on server for new messages."
+        with self:
+            options = self.options.copy()
+            msg_ids = self.msg_ids.copy()
+            seen_uids = self.uids.copy()
+        try:
+            info = server.select_folder(folder)
+            self.log.debug("select folder %r, info: %r.", folder, info)
 
             nnew = 0
             self.log.debug("look back %d days.", options["lookback"])
             start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
             uids = server.search(["SINCE", start])
             uids = set(uids) - seen_uids
-            self.log.info("%d new UIDs returned.", len(uids))
+            self.log.info("%s: %d new UIDs returned.", folder, len(uids))
             for uid in uids:
                 seen_uids.add(uid)
-                try:
-                    result = server.fetch([uid], [b'RFC822'])
-                except imaplib.IMAP4.abort as abt:
-                    self.log.error("%s uid=%s", abt, uid)
-                    raise
+                result = server.fetch([uid], [b'RFC822'])
                 msg = email.message_from_bytes(result[uid][b"RFC822"])
                 msg_id = msg["Message-ID"].strip()
                 if msg_id in msg_ids:
@@ -533,8 +548,8 @@ class Polly:
                         self.uids = seen_uids.copy()
                 elif nnew % 10 == 0:
                     self.log.info("new msgs: %d", nnew)
-
-            self.log.warning("Finished. new msgs: %d", nnew)
+            return nnew
+        finally:
             with self:
                 self.msg_ids = msg_ids.copy()
                 self.uids = seen_uids.copy()
@@ -646,6 +661,8 @@ def read_config(configfile, options):
         except configparser.NoOptionError:
             pass
         else:
+            if key == "folder":
+                value = [f.strip() for f in value.split(",")]
             options[key] = value
 
 GETTERS = {
