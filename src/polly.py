@@ -641,13 +641,12 @@ def read_config(configfile, options):
     config = configparser.RawConfigParser()
     config.read(configfile)
     for key in options:
-        if options[key] is None:
-            try:
-                value = getattr(config, GETTERS[key])("Polly", key)
-            except configparser.NoOptionError:
-                pass
-            else:
-                options[key] = value
+        try:
+            value = getattr(config, GETTERS[key])("Polly", key)
+        except configparser.NoOptionError:
+            pass
+        else:
+            options[key] = value
 
 GETTERS = {
     "server": "get",
