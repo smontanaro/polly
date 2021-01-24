@@ -46,12 +46,15 @@ slightly more automated.
 
 ## Basic idea
 
-1. Choose a set of random words (default four) from the dictionary (basic XKCD 936
+1. Choose a set of random words (default four) from the dictionary
+   (basic XKCD 936
    passphrase). For example: `correct horse battery staple`.
-2. Optionally separate the words using punctuation or digits. For example: `correct!horse^battery5staple`.
-3. Optionally upshift individual letters in the words (with low probability). For example: `corRect!horsE^battery5Staple`.
-4. Optionally insert punctuation or digits between letters (with even lower
-   probability). For example: `corRec3t!horsE^bat_tery5Staple`.
+2. Optionally separate the words using punctuation or digits. For
+   example: `correct!horse^battery5staple`.
+3. Optionally upshift individual letters in the words (with low
+   probability). For example: `corRect!horsE^battery5Staple`.
+4. Optionally insert punctuation or digits between letters (with
+   even lower probability). For example: `corRec3t!horsE^bat_tery5Staple`.
 
 The user can choose to use any or all of the above tweaks in the
 config file.
@@ -130,7 +133,7 @@ There are a number of caveats to this sort of program:
 
 * help or ?      - print this help
 
-* option         - display all current options
+* option         - display all options and their current values
 
 * option name value - set option "name" to value
 
