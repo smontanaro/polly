@@ -663,6 +663,8 @@ def read_config(configfile, options):
         else:
             if key == "folder":
                 value = [f.strip() for f in value.split(",")]
+            elif key == "verbose":
+                value = value.upper()
             options[key] = value
 
 GETTERS = {
