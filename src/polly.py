@@ -268,11 +268,9 @@ class Polly:
 
     def rebuild(self, _arg):
         "Rebuild self.emitted from self.words."
-        counts = sorted([(self.words[w], w)
-                             for w in self.words if w not in self.bad])
-        nwords = self.options["nwords"]
-        words = [w for (_count, w) in counts[-nwords:]]
-        self.emitted = set(words)
+        counts = sorted((self.words[w], w) for w in self.words
+                            if len(w) >= self.options["minchars"] and w not in self.bad)
+        self.emitted = set(w for (_count, w) in counts[-self.options["nwords"]:])
 
     def load_pfile(self):
         "Read state from the pickle file."
@@ -308,7 +306,6 @@ class Polly:
 
     def consider_words(self, candidates):
         "Filter out tokens which are non-ascii or look like HTML tags."
-        lowercase = LOWER
         html = set()
         nwords = len(self.emitted)
         for raw in candidates:
@@ -319,19 +316,20 @@ class Polly:
                 html.add(raw)
                 continue
             wset = set(word)
-            # Though we live in a Unicode world, I really only want stuff
-            # *I* can type as a password, so restrict words to ASCII
-            # lowercase. There's probably a more general way to accommodate
-            # the population of users who can easily type non-ASCII text,
-            # but I'll let someone else deal with that.
+            # Though we live in a Unicode world, I really only want
+            # stuff *I* can easily type as a password, so restrict
+            # words to ASCII lowercase. There's probably a more
+            # general way to accommodate the population of users who
+            # can easily type non-ASCII text, but I'll let someone
+            # else deal with that.
             if (word in self.bad or
-                len(word) < 4 or
-                wset & lowercase != wset):
+                len(word) < self.options["minchars"] or
+                wset & LOWER != wset):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
             if (word not in self.emitted and
-                self.words[word] >= 10 and
-                len(self.words) >= 500):
+                self.words[word] >= 7 and
+                len(self.words) >= 250):
                 counts = sorted(self.words.values())
                 min_index = len(self.words) - self.options["nwords"]
                 if counts.index(self.words[word]) >= min_index:
@@ -344,7 +342,7 @@ class Polly:
         print(f"all words: {len(self.words)}")
         print(f"common words: {len(self.emitted)}", end=' ')
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
-        print(f"entropy: {bits:.3f} bits")
+        print(f"entropy: {bits * self.options['length']:.3f} bits")
         print(f"'bad' words: {len(self.bad)}")
         print(f"seen uids: {len(self.uids)}", end=' ')
         if self.uids:
