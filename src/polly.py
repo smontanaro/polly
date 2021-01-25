@@ -496,7 +496,7 @@ class Polly:
                     self.log.error("Server read error: %s", abt)
                     self.log.error("Exiting read loop early")
                     return
-            self.log.info("Finished. new msgs: %d", nnew)
+            self.log.warning("Finished. new msgs: %d", nnew)
 
     def select_and_read(self, server, folder):
         "Check folder on server for new messages."
