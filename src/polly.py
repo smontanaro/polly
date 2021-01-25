@@ -513,7 +513,7 @@ class Polly:
             start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
             uids = server.search(["SINCE", start])
             uids = set(uids) - seen_uids
-            self.log.info("%s: %d new UIDs returned.", folder, len(uids))
+            self.log.warning("%s: %d new UIDs returned.", folder, len(uids))
             for uid in uids:
                 seen_uids.add(uid)
                 result = server.fetch([uid], [b'RFC822'])
