@@ -5,3 +5,6 @@ polly.good
 polly.bad
 *.diff
 *words
+*.log
+*.gz
+*.bz2
