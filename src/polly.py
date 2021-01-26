@@ -65,11 +65,13 @@ Readline support is enabled, with input history saved in ~/.polly.rc.
 
 import atexit
 import binascii
+import bz2
 import configparser
 import datetime
 import email
 from email.iterators import typed_subpart_iterator
 import getopt
+import gzip
 import imaplib
 import logging
 import math
@@ -404,7 +406,7 @@ class Polly:
             elif option == "logfile":
                 self.options["logfile"] = value
                 logging.basicConfig(format=LOG_FORMAT, force=True,
-                                    filename=self.options["logfile"], filemode="a")
+                                    stream=smart_open(self.options["logfile"], "at"))
                 self.log = logging.getLogger("polly")
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
@@ -654,6 +656,14 @@ def read_config(configfile, options):
                 value = value.upper()
             options[key] = value
 
+def smart_open(filename, mode="r"):
+    "use file extension to decide how to open filename"
+    if filename.endswith(".gz"):
+        return gzip.open(filename, mode)
+    if filename.endswith(".bz2"):
+        return bz2.open(filename, mode)
+    return open(filename, mode)
+
 GETTERS = {
     "server": "get",
     "user": "get",
@@ -746,7 +756,7 @@ def main(args):
             options["hash"] = True
 
     logging.basicConfig(format=LOG_FORMAT, force=True,
-                        filename=options["logfile"], filemode="a")
+                        stream=smart_open(options["logfile"], "at"))
 
     polly = Polly(options)
 
