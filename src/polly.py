@@ -76,7 +76,6 @@ import math
 import os
 import pickle
 import random
-import re
 import readline
 import ssl
 import string
@@ -300,41 +299,26 @@ class Polly:
             for word in sorted(self.bad):
                 bfile.write(word+"\n")
 
-    def process_text(self, text):
-        "must be called inside a 'with' statement."
-        return self.consider_words(set(text.split()))
-
     def consider_words(self, candidates):
         "Filter out tokens which are non-ascii or look like HTML tags."
         html = set()
-        nwords = len(self.emitted)
-        for raw in candidates:
-            word = re.sub(r"</?[^ >]+>\s*", "", raw)
-            if not word:
-                # word was an HTML tag.
-                self.log.debug("HTML: %s", raw)
-                html.add(raw)
-                continue
+        nemitted = len(self.emitted)
+        for word in candidates:
             wset = set(word)
-            # Though we live in a Unicode world, I really only want
-            # stuff *I* can easily type as a password, so restrict
-            # words to ASCII lowercase. There's probably a more
-            # general way to accommodate the population of users who
-            # can easily type non-ASCII text, but I'll let someone
-            # else deal with that.
             if (word in self.bad or
                 len(word) < self.options["minchars"] or
+                # Only lower case ASCII - no numbers, punct, accents, HTML tags ...
                 wset & LOWER != wset):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
+            len_words = len(self.words)
             if (word not in self.emitted and
                 self.words[word] >= 7 and
-                len(self.words) >= 250):
+                len_words >= 250):
                 counts = sorted(self.words.values())
-                min_index = len(self.words) - self.options["nwords"]
-                if counts.index(self.words[word]) >= min_index:
+                if counts.index(self.words[word]) >= len_words - self.options["nwords"]:
                     self.emitted.add(word)
-        return (len(self.emitted) - nwords, len(html))
+        return (len(self.emitted) - nemitted, len(html))
 
     def print_statistics(self, _arg):
         "Print some summary details."
@@ -379,10 +363,7 @@ class Polly:
         try:
             while True:
                 prompt = "? " if self.options["prompt"] else ""
-                try:
-                    command = input(prompt).strip()
-                except EOFError:
-                    break
+                command = input(prompt).strip()
                 if not command:
                     continue
                 try:
@@ -398,7 +379,7 @@ class Polly:
                         cmdfunc(arg)
                         continue
                     self.log.error("Unrecognized command %r", command)
-        except KeyboardInterrupt:
+        except (EOFError, KeyboardInterrupt):
             pass
 
         self.log.info("Awk! Goodbye...")
@@ -420,6 +401,11 @@ class Polly:
                     self.log.setLevel(self.options["verbose"])
                 else:
                     self.log.error("%r is not a valid log level name", value)
+            elif option == "logfile":
+                self.options["logfile"] = value
+                logging.basicConfig(format=LOG_FORMAT, force=True,
+                                    filename=self.options["logfile"], filemode="a")
+                self.log = logging.getLogger("polly")
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
                 self.options[option] = int(value)
@@ -492,11 +478,11 @@ class Polly:
             for folder in options["folder"]:
                 try:
                     nnew += self.select_and_read(server, folder)
-                except imaplib.IMAP4.abort as abt:
-                    self.log.error("Server read error: %s", abt)
+                except (ConnectionError, imaplib.IMAP4.error) as abt:
+                    self.log.error("Server read error %s", abt)
                     self.log.error("Exiting read loop early")
                     return
-            self.log.warning("Finished. new msgs: %d", nnew)
+            self.log.warning("Finished. All new msgs: %d", nnew)
 
     def select_and_read(self, server, folder):
         "Check folder on server for new messages."
@@ -505,24 +491,26 @@ class Polly:
             msg_ids = self.msg_ids.copy()
             seen_uids = self.uids.copy()
         try:
-            info = server.select_folder(folder)
-            self.log.debug("select folder %r, info: %r.", folder, info)
-
+            server.select_folder(folder)
+            self.log.debug("select folder %r.", folder)
             nnew = 0
             self.log.debug("look back %d days.", options["lookback"])
             start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
-            uids = server.search(["SINCE", start])
+            uids = server.search([b"SINCE", start.date()])
             uids = set(uids) - seen_uids
             self.log.warning("%s: %d new UIDs returned.", folder, len(uids))
             for uid in uids:
-                seen_uids.add(uid)
-                result = server.fetch([uid], [b'RFC822'])
-                msg = email.message_from_bytes(result[uid][b"RFC822"])
-                msg_id = msg["Message-ID"].strip()
+                seen_uids.add((folder, uid))
+                result = server.fetch([uid], [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
+                msg = email.message_from_bytes(result[uid][b"BODY[TEXT]"])
+                envelope = result[uid][b'ENVELOPE']
+                self.log.trace("%s", envelope)
+                msg_id = envelope.message_id
                 if msg_id in msg_ids:
                     # Already processed
                     continue
-                self.log.debug("UID: %s, Message-ID: %r", uid, msg_id)
+                self.log.debug("UID: %s, Date: %s, Message-ID: %r",
+                               uid, envelope.date, msg_id)
                 msg_ids.add(msg_id)
 
                 # We haven't seen this message yet. Process its text
@@ -534,23 +522,24 @@ class Polly:
 
                 nnew += 1
                 with self:
-                    nwords, nhtml = self.process_text(text)
+                    nwords, nhtml = self.consider_words(set(text.split()))
                     if nwords or nhtml:
                         self.log.debug("%d new words from %s (%d HTML tags).",
                                        nwords, msg_id, nhtml)
 
                 if nnew % 100 == 0:
-                    self.log.warning("new msgs: %d", nnew)
+                    self.log.warning("%s new msgs: %d/%d", folder, nnew, len(uids))
                     with self:
-                        self.msg_ids = msg_ids.copy()
-                        self.uids = seen_uids.copy()
+                        self.msg_ids |= msg_ids
+                        self.uids |= seen_uids
                 elif nnew % 10 == 0:
-                    self.log.info("new msgs: %d", nnew)
+                    self.log.info("%s new msgs: %d", folder, nnew)
+            self.log.warning("%s new msgs: %d", folder, nnew)
             return nnew
         finally:
             with self:
-                self.msg_ids = msg_ids.copy()
-                self.uids = seen_uids.copy()
+                self.msg_ids |= msg_ids
+                self.uids |= seen_uids
 
     # get_charset and get_body are adapted from:
     #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
@@ -672,6 +661,7 @@ GETTERS = {
     "prompt": "get",
     "folder": "get",
     "length": "getint",
+    "logfile": "get",
     "lookback": "getint",
     "nwords": "getint",
     "verbose": "get",
@@ -701,6 +691,7 @@ def main(args):
         "folder": None,
         "hash": False,
         "length": 4,
+        "logfile": "/dev/stderr",
         "lookback": 50,
         "maxchars": 999,
         "minchars": 3,
@@ -718,7 +709,7 @@ def main(args):
 
     generate_n = 0
     configfile = None
-    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:n", ["help"])
+    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:nl:", ["help"])
     for opt, arg in opts:
         if opt == "-c":
             configfile = arg
@@ -747,12 +738,15 @@ def main(args):
             generate_n = int(arg)
         elif opt == "-L":
             options["verbose"] = arg
+        elif opt == "-l":
+            options["logfile"] = arg
         elif opt == "-n":
             options["prompt"] = False
         elif opt == "-H":
             options["hash"] = True
 
-    logging.basicConfig(format=LOG_FORMAT, force=True)
+    logging.basicConfig(format=LOG_FORMAT, force=True,
+                        filename=options["logfile"], filemode="a")
 
     polly = Polly(options)
 
