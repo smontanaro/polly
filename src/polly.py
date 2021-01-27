@@ -501,7 +501,8 @@ class Polly:
             uids = server.search([b"SINCE", start.date()])
             uids = [(folder, uid) for uid in uids]
             uids = list(set(uids) - seen_uids)
-            self.log.warning("%s: %d new UIDs returned.", folder, len(uids))
+            nuids = len(uids)
+            self.log.warning("%s: %d new UIDs returned.", folder, nuids)
             while uids:
                 (chunk, uids) = (uids[:100], uids[100:])
                 chunk = [uid for (_folder, uid) in chunk]
@@ -513,7 +514,7 @@ class Polly:
                                                      result[uid][b"ENVELOPE"],
                                                      msg_ids)
                 if nnew % 100 == 0:
-                    self.log.warning("%s new msgs: %d/%d", folder, nnew, len(uids))
+                    self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
                     with self:
                         self.msg_ids |= msg_ids
                         self.uids |= seen_uids
