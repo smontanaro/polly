@@ -499,36 +499,19 @@ class Polly:
             self.log.debug("look back %d days.", options["lookback"])
             start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
             uids = server.search([b"SINCE", start.date()])
-            uids = set(uids) - seen_uids
+            uids = [(folder, uid) for uid in uids]
+            uids = list(set(uids) - seen_uids)
             self.log.warning("%s: %d new UIDs returned.", folder, len(uids))
-            for uid in uids:
-                seen_uids.add((folder, uid))
-                result = server.fetch([uid], [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
-                msg = email.message_from_bytes(result[uid][b"BODY[TEXT]"])
-                envelope = result[uid][b'ENVELOPE']
-                self.log.trace("%s", envelope)
-                msg_id = envelope.message_id
-                if msg_id in msg_ids:
-                    # Already processed
-                    continue
-                self.log.debug("UID: %s, Date: %s, Message-ID: %r",
-                               uid, envelope.date, msg_id)
-                msg_ids.add(msg_id)
-
-                # We haven't seen this message yet. Process its text
-                # (well, the first text/plain part or the plain text of
-                # the first text/html part we come across).
-                text = self.get_body(msg)
-                if not text:
-                    continue
-
-                nnew += 1
-                with self:
-                    nwords, nhtml = self.consider_words(set(text.split()))
-                    if nwords or nhtml:
-                        self.log.debug("%d new words from %s (%d HTML tags).",
-                                       nwords, msg_id, nhtml)
-
+            while uids:
+                (chunk, uids) = (uids[:100], uids[100:])
+                chunk = [uid for (_folder, uid) in chunk]
+                result = server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
+                for uid in chunk:
+                    seen_uids.add((folder, uid))
+                    nnew += self.process_one_message(uid,
+                                                     result[uid][b"BODY[TEXT]"],
+                                                     result[uid][b"ENVELOPE"],
+                                                     msg_ids)
                 if nnew % 100 == 0:
                     self.log.warning("%s new msgs: %d/%d", folder, nnew, len(uids))
                     with self:
@@ -542,6 +525,33 @@ class Polly:
             with self:
                 self.msg_ids |= msg_ids
                 self.uids |= seen_uids
+
+    def process_one_message(self, uid, body, envelope, msg_ids):
+        "Handle one message"
+        msg = email.message_from_bytes(body)
+        self.log.trace("%s", envelope)
+        msg_id = envelope.message_id
+        if msg_id in msg_ids:
+            # Already processed
+            return 0
+        self.log.debug("UID: %s, Date: %s, Message-ID: %r",
+                       uid, envelope.date, msg_id)
+        msg_ids.add(msg_id)
+
+        # We haven't seen this message yet. Process its text
+        # (well, the first text/plain part or the plain text of
+        # the first text/html part we come across).
+        text = self.get_body(msg)
+        if not text:
+            return 0
+
+        with self:
+            nwords, nhtml = self.consider_words(set(text.split()))
+            if nwords or nhtml:
+                self.log.debug("%d new words from %s (%d HTML tags).",
+                               nwords, msg_id, nhtml)
+
+        return 1
 
     # get_charset and get_body are adapted from:
     #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
