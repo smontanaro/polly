@@ -24,24 +24,24 @@ following options may be defined.
 Options
 -------
 
-server         - the hostname of the IMAP server (required)
-user           - the login name on the IMAP server (required)
-password       - the password for the IMAP server (required)
-folder         - comma-separated list of folder(s) to check for messages (required)
-nwords         - n common words to use when considering candidates
-                 (default 2048)
-verbose        - set to string value of log level (default FATAL)
-punctuation    - when True, allow punctuation between words (default False)
 digits         - when True, allow digits between words (default False)
-lookback       - number of days to look back for messages (default 50)
-minchars       - length of shortest word to use when generating passwords
-                 (default 3)
-maxchars       - length of longest word to use when generating passwords
-                 (default 999)
 edit-mode      - editor mode for readline (default 'emacs')
-length         - number of words used to construct passwords (default 4)
+folder         - comma-separated list of folder(s) to check for messages (required)
 hash           - emit passwords using $dummy$hex instead of plain text
                  passwords (for strength testing using JohnTheRipper)
+length         - number of words used to construct passwords (default 4)
+lookback       - number of days to look back for messages (default 50)
+maxchars       - length of longest word to use when generating passwords
+                 (default 999)
+minchars       - length of shortest word to use when generating passwords
+                 (default 3)
+nwords         - n common words to use when considering candidates
+                 (default 2048)
+password       - the password for the IMAP server (required)
+punctuation    - when True, allow punctuation between words (default False)
+server         - the hostname of the IMAP server (required)
+user           - the login name on the IMAP server (required)
+verbose        - set to string value of log level (default FATAL)
 
 Commands
 --------
@@ -100,6 +100,7 @@ DIGITS = set(string.digits)
 class Polly:
     "Workhorse of the system."
     def __init__(self, options):
+        self._log_fp = None
         self.reader = None
         self.options = options
         self.msg_ids = set()
@@ -127,6 +128,16 @@ class Polly:
             self.rng.seed(100)
         else:
             self.rng = random.SystemRandom()
+
+    @property
+    def log_fp(self):
+        "property to get/set logfile and close when necessary."
+        return self._log_fp
+    @log_fp.setter
+    def log_fp(self, log_fp):
+        if self._log_fp is not None and not self._log_fp.closed:
+            self._log_fp.close()
+        self._log_fp = log_fp
 
     def __enter__(self):
         self.sema.acquire()
@@ -301,6 +312,10 @@ class Polly:
             for word in sorted(self.bad):
                 bfile.write(word+"\n")
 
+        # Make sure log records are flushed.
+        if self.log_fp is not None and not self.log_fp.closed:
+            self.log_fp.flush()
+
     def consider_words(self, candidates):
         "Filter out tokens which are non-ascii or look like HTML tags."
         html = set()
@@ -405,8 +420,8 @@ class Polly:
                     self.log.error("%r is not a valid log level name", value)
             elif option == "logfile":
                 self.options["logfile"] = value
-                logging.basicConfig(format=LOG_FORMAT, force=True,
-                                    stream=smart_open(self.options["logfile"], "at"))
+                self.log_fp = smart_open(self.options["logfile"], "at")
+                logging.basicConfig(format=LOG_FORMAT, force=True, stream=self.log_fp)
                 self.log = logging.getLogger("polly")
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
@@ -676,25 +691,25 @@ def smart_open(filename, mode="r"):
     return open(filename, mode)
 
 GETTERS = {
-    "server": "get",
-    "user": "get",
-    "password": "get",
-    "prompt": "get",
+    "digits": "getboolean",
+    "editing-mode": "get",
     "folder": "get",
+    "hash": "getboolean",
     "length": "getint",
     "logfile": "get",
     "lookback": "getint",
-    "nwords": "getint",
-    "verbose": "get",
-    "digits": "getboolean",
-    "punctuation": "getboolean",
-    "upper": "getboolean",
-    "minchars": "getint",
     "maxchars": "getint",
-    "editing-mode": "get",
-    "hash": "getboolean",
-    "unittests": "getboolean",
+    "minchars": "getint",
+    "nwords": "getint",
+    "password": "get",
     "picklefile": "get",
+    "prompt": "get",
+    "punctuation": "getboolean",
+    "server": "get",
+    "unittests": "getboolean",
+    "upper": "getboolean",
+    "user": "get",
+    "verbose": "get",
     }
 
 def main(args):
@@ -766,10 +781,11 @@ def main(args):
         elif opt == "-H":
             options["hash"] = True
 
-    logging.basicConfig(format=LOG_FORMAT, force=True,
-                        stream=smart_open(options["logfile"], "at"))
+    log = smart_open(options["logfile"], "at")
+    logging.basicConfig(format=LOG_FORMAT, force=True, stream=log)
 
     polly = Polly(options)
+    polly.log_fp = log
 
     # Just generate some passwords
     if generate_n:
