@@ -8,3 +8,6 @@ polly.bad
 *.log
 *.gz
 *.bz2
+.coverage
+htmlcov
+*,cover
