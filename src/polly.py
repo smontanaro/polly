@@ -26,7 +26,8 @@ Options
 
 digits         - when True, allow digits between words (default False)
 edit-mode      - editor mode for readline (default 'emacs')
-folder         - comma-separated list of folder(s) to check for messages (required)
+folder         - comma-separated list of folder(s) to check for
+                 messages (required)
 hash           - emit passwords using $dummy$hex instead of plain text
                  passwords (for strength testing using JohnTheRipper)
 length         - number of words used to construct passwords (default 4)
@@ -187,7 +188,8 @@ class Polly:
             words[i:i] = extras[0]
         passwd = "".join(words)
         if self.options["hash"]:
-            passwd = "$dummy$" + str(binascii.hexlify(bytes(passwd, encoding="utf-8")),
+            passwd = "$dummy$" + str(binascii.hexlify(bytes(passwd,
+                                                            encoding="utf-8")),
                                      encoding="utf-8")
         return passwd
 
@@ -224,7 +226,8 @@ class Polly:
         """Retrieve word-like things which might not really be words.
 
         dictfile is our authority.  We return any in self.emitted
-        which don't appear in dictfile, minus any in our set of explicitly good words
+        which don't appear in dictfile, minus any in our set of
+        explicitly good words
 
         """
         if not os.path.exists(dictfile):
@@ -281,21 +284,18 @@ class Polly:
     def rebuild(self, _arg):
         "Rebuild self.emitted from self.words."
         counts = sorted((self.words[w], w) for w in self.words
-                            if len(w) >= self.options["minchars"] and w not in self.bad)
+                            if (len(w) >= self.options["minchars"] and
+                                w not in self.bad))
         self.emitted = set(w for (_count, w) in counts[-self.options["nwords"]:])
 
     def load_pfile(self):
         "Read state from the pickle file."
         if os.path.exists(self.pfile):
-            # Bad word list is in separate plain text file.
-            try:
-                with open(self.pfile, "rb") as pfile:
-                    (self.msg_ids, self.words, self.emitted, self.uids) = pickle.load(pfile)
-            except ValueError:
-                with open(self.pfile, "rb") as pfile:
-                    (self.msg_ids, self.words, self.emitted) = pickle.load(pfile)
-                    self.uids = set()
+            with open(self.pfile, "rb") as pfile:
+                (self.msg_ids, self.words, self.emitted,
+                 self.uids) = pickle.load(pfile)
 
+        # Bad word list is in separate plain text file.
         if os.path.exists(self.bfile):
             with open(self.bfile) as bfile:
                 self.bad |= {w.strip() for w in bfile}
@@ -303,7 +303,8 @@ class Polly:
     def save_pfile(self, _arg):
         "Write state to pickle file."
         with open(self.pfile, "wb") as pfile:
-            pickle.dump((self.msg_ids, self.words, self.emitted, self.uids), pfile)
+            pickle.dump((self.msg_ids, self.words, self.emitted, self.uids),
+                        pfile)
 
         # Save bad words in a plain text file so we can retain them if
         # we decide to toss the pickle file, and so we can easily edit
@@ -324,7 +325,8 @@ class Polly:
             wset = set(word)
             if (word in self.bad or
                 len(word) < self.options["minchars"] or
-                # Only lower case ASCII - no numbers, punct, accents, HTML tags ...
+                # Only lower case ASCII - no numbers, punct, accents,
+                # HTML tags ...
                 wset & LOWER != wset):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
@@ -333,7 +335,8 @@ class Polly:
                 self.words[word] >= 7 and
                 len_words >= 250):
                 counts = sorted(self.words.values())
-                if counts.index(self.words[word]) >= len_words - self.options["nwords"]:
+                if (counts.index(self.words[word]) >=
+                    len_words - self.options["nwords"]):
                     self.emitted.add(word)
         return (len(self.emitted) - nemitted, len(html))
 
@@ -376,6 +379,7 @@ class Polly:
             "add": self.add_words,
             "good": self.add_good_words,
             "option": self.process_option,
+            "sleep": self.sleep, # just for testing...
         }
         try:
             while True:
@@ -401,6 +405,10 @@ class Polly:
 
         self.log.info("Awk! Goodbye...")
 
+    def sleep(self, arg):
+        "sleep for a bit - just to support testing."
+        time.sleep(float(arg))
+
     def process_option(self, arg):
         "Show or set options."
         if not arg.strip():
@@ -421,7 +429,8 @@ class Polly:
             elif option == "logfile":
                 self.options["logfile"] = value
                 self.log_fp = smart_open(self.options["logfile"], "at")
-                logging.basicConfig(format=LOG_FORMAT, force=True, stream=self.log_fp)
+                logging.basicConfig(format=LOG_FORMAT, force=True,
+                                    stream=self.log_fp)
                 self.log = logging.getLogger("polly")
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
@@ -512,7 +521,8 @@ class Polly:
             self.log.debug("select folder %r.", folder)
             nnew = 0
             self.log.debug("look back %d days.", options["lookback"])
-            start = datetime.datetime.now()-datetime.timedelta(days=options["lookback"])
+            start = (datetime.datetime.now() -
+                     datetime.timedelta(days=options["lookback"]))
             uids = server.search([b"SINCE", start.date()])
             uids = [(folder, uid) for uid in uids]
             uids = list(set(uids) - seen_uids)
@@ -570,7 +580,7 @@ class Polly:
         return 1
 
     # get_charset and get_body are adapted from:
-    #  http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
+    #   http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
 
     # pylint: disable=no-self-use
     def get_charset(self, message, default="ascii"):
@@ -591,7 +601,8 @@ class Polly:
             for (type_, subtype) in (("text", "plain"), ("text", "html")):
                 for part in typed_subpart_iterator(message, type_, subtype):
                     charset = self.get_charset(part, self.get_charset(message))
-                    payload = str(part.get_payload(decode=True), charset, "replace")
+                    payload = str(part.get_payload(decode=True), charset,
+                                  "replace")
                     self.log.trace("%s/%s charset: %s, payload: %s...",
                                    type_, subtype, charset, payload[0:50])
                     body.append(payload)
@@ -754,7 +765,8 @@ def main(args):
                     pass
             except OSError:
                 log = logging.getLogger("polly")
-                log.fatal("Specified config file %s does not exist or is not readable.",
+                log.fatal("Specified config file %s does not exist or"
+                          " is not readable.",
                           configfile)
                 return 1
             else:
