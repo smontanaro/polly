@@ -78,6 +78,7 @@ import logging
 import math
 import os
 import pickle
+import queue
 import random
 import readline
 import ssl
@@ -102,6 +103,7 @@ class Polly:
     "Workhorse of the system."
     def __init__(self, options):
         self._log_fp = None
+        self.log_queue = queue.Queue()
         self.reader = None
         self.options = options
         self.msg_ids = set()
@@ -383,6 +385,14 @@ class Polly:
         }
         try:
             while True:
+                # Grab whatever log records we can from the IMAP thread.
+                try:
+                    while True:
+                        (level, args, kwds) = self.log_queue.get_nowait()
+                        self.log.log(level, *args, **kwds)
+                except queue.Empty:
+                    pass
+
                 prompt = "? " if self.options["prompt"] else ""
                 command = input(prompt).strip()
                 if not command:
@@ -478,6 +488,10 @@ class Polly:
         finally:
             self.reader = None
 
+    def log_thread(self, level, *args, **kwds):
+        "helper"
+        self.log_queue.put((getattr(logging, level), args, kwds))
+
     def read_loop(self):
         "Basic loop over IMAP connection."
         with self:
@@ -496,19 +510,19 @@ class Polly:
             try:
                 server.login(options["user"], options["password"])
             except imapclient.exceptions.IMAPClientError:
-                self.log.error("login failed. check your credentials.")
-                self.log.error("Exiting read loop early")
+                self.log_thread("ERROR", "login failed. check your credentials.")
+                self.log_thread("ERROR", "Exiting read loop early")
                 return
-            self.log.debug("login successful.")
+            self.log_thread("TRACE", "login successful.")
             nnew = 0
             for folder in options["folder"]:
                 try:
                     nnew += self.select_and_read(server, folder)
                 except (ConnectionError, imaplib.IMAP4.error) as abt:
-                    self.log.error("Server read error %s", abt)
-                    self.log.error("Exiting read loop early")
+                    self.log_thread("ERROR", "Server read error %s", abt)
+                    self.log_thread("ERROR", "Exiting read loop early")
                     return
-            self.log.warning("Finished. All new msgs: %d", nnew)
+            self.log_thread("WARNING", "Finished. All new msgs: %d", nnew)
 
     def select_and_read(self, server, folder):
         "Check folder on server for new messages."
@@ -518,16 +532,17 @@ class Polly:
             seen_uids = self.uids.copy()
         try:
             server.select_folder(folder)
-            self.log.debug("select folder %r.", folder)
+            self.log_thread("DEBUG", "select folder %r.", folder)
             nnew = 0
-            self.log.debug("look back %d days.", options["lookback"])
+            self.log_thread("DEBUG", "look back %d days.", options["lookback"])
             start = (datetime.datetime.now() -
                      datetime.timedelta(days=options["lookback"]))
             uids = server.search([b"SINCE", start.date()])
             uids = [(folder, uid) for uid in uids]
             uids = list(set(uids) - seen_uids)
             nuids = len(uids)
-            self.log.warning("%s: %d new UIDs returned.", folder, nuids)
+            self.log_thread("WARNING", "%s: %d new UIDs returned.",
+                            folder, nuids)
             while uids:
                 (chunk, uids) = (uids[:100], uids[100:])
                 chunk = [uid for (_folder, uid) in chunk]
@@ -539,13 +554,14 @@ class Polly:
                                                      result[uid][b"ENVELOPE"],
                                                      msg_ids)
                 if nnew % 100 == 0:
-                    self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
+                    self.log_thread("WARNING", "%s new msgs: %d/%d",
+                                    folder, nnew, nuids)
                     with self:
                         self.msg_ids |= msg_ids
                         self.uids |= seen_uids
                 elif nnew % 10 == 0:
-                    self.log.info("%s new msgs: %d", folder, nnew)
-            self.log.warning("%s new msgs: %d", folder, nnew)
+                    self.log_thread("INFO", "%s new msgs: %d", folder, nnew)
+            self.log_thread("WARNING", "%s new msgs: %d", folder, nnew)
             return nnew
         finally:
             with self:
@@ -555,13 +571,13 @@ class Polly:
     def process_one_message(self, uid, body, envelope, msg_ids):
         "Handle one message"
         msg = email.message_from_bytes(body)
-        self.log.trace("%s", envelope)
+        self.log_thread("TRACE", "%s", envelope)
         msg_id = envelope.message_id
         if msg_id in msg_ids:
             # Already processed
             return 0
-        self.log.debug("UID: %s, Date: %s, Message-ID: %r",
-                       uid, envelope.date, msg_id)
+        self.log_thread("DEBUG", "UID: %s, Date: %s, Message-ID: %r",
+                        uid, envelope.date, msg_id)
         msg_ids.add(msg_id)
 
         # We haven't seen this message yet. Process its text
@@ -574,8 +590,8 @@ class Polly:
         with self:
             nwords, nhtml = self.consider_words(set(text.split()))
             if nwords or nhtml:
-                self.log.debug("%d new words from %s (%d HTML tags).",
-                               nwords, msg_id, nhtml)
+                self.log_thread("DEBUG", "%d new words from %s (%d HTML tags).",
+                                nwords, msg_id, nhtml)
 
         return 1
 
