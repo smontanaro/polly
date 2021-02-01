@@ -81,6 +81,7 @@ import pickle
 import queue
 import random
 import readline
+import socket
 import ssl
 import string
 import sys
@@ -509,7 +510,7 @@ class Polly:
                                    ssl_context=ssl_context) as server:
             try:
                 server.login(options["user"], options["password"])
-            except imapclient.exceptions.IMAPClientError:
+            except (imapclient.exceptions.IMAPClientError, socket.gaierror):
                 self.log_thread("ERROR", "login failed. check your credentials.")
                 self.log_thread("ERROR", "Exiting read loop early")
                 return
