@@ -318,7 +318,17 @@ class Polly:
 
         # Make sure log records are flushed.
         if self.log_fp is not None and not self.log_fp.closed:
-            self.log_fp.flush()
+            self.close_log()
+            self.open_log()
+
+    def close_log(self):
+        "flush and close log"
+        self.log_fp.flush()
+        self.log_fp.close()
+
+    def open_log(self):
+        "(re)open log"
+        self.log_fp = smart_open(self.options["logfile"], "at")
 
     def consider_words(self, candidates):
         "Filter out tokens which are non-ascii or look like HTML tags."
@@ -416,6 +426,7 @@ class Polly:
 
         self.log.info("Awk! Goodbye...")
 
+    # pylint: disable=no-self-use
     def sleep(self, arg):
         "sleep for a bit - just to support testing."
         time.sleep(float(arg))
@@ -439,7 +450,7 @@ class Polly:
                     self.log.error("%r is not a valid log level name", value)
             elif option == "logfile":
                 self.options["logfile"] = value
-                self.log_fp = smart_open(self.options["logfile"], "at")
+                self.open_log()
                 logging.basicConfig(format=LOG_FORMAT, force=True,
                                     stream=self.log_fp)
                 self.log = logging.getLogger("polly")
@@ -810,11 +821,9 @@ def main(args):
         elif opt == "-H":
             options["hash"] = True
 
-    log = smart_open(options["logfile"], "at")
-    logging.basicConfig(format=LOG_FORMAT, force=True, stream=log)
-
     polly = Polly(options)
-    polly.log_fp = log
+    polly.open_log()
+    logging.basicConfig(format=LOG_FORMAT, force=True, stream=polly.log_fp)
 
     # Just generate some passwords
     if generate_n:
