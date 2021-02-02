@@ -103,18 +103,18 @@ DIGITS = set(string.digits)
 class Polly:
     "Workhorse of the system."
     def __init__(self, options):
+        self.options = options
         self._log_fp = None
+        self.log = None
+        self.open_log()
         self.log_queue = queue.Queue()
         self.reader = None
-        self.options = options
         self.msg_ids = set()
         self.words = {}
         self.emitted = set()
         self.bad = set()
         self.uids = set()
         self.good_words = set()
-        self.log = logging.getLogger("polly")
-        self.log.setLevel(options["verbose"])
         self.pfile = options["picklefile"]
         pkl_dir = os.path.dirname(self.pfile)
         self.bfile = os.path.join(pkl_dir, "polly.bad")
@@ -316,19 +316,18 @@ class Polly:
             for word in sorted(self.bad):
                 bfile.write(word+"\n")
 
-        # Make sure log records are flushed.
-        if self.log_fp is not None and not self.log_fp.closed:
-            self.close_log()
-            self.open_log()
-
-    def close_log(self):
-        "flush and close log"
-        self.log_fp.flush()
-        self.log_fp.close()
-
     def open_log(self):
         "(re)open log"
         self.log_fp = smart_open(self.options["logfile"], "at")
+        logging.basicConfig(format=LOG_FORMAT, force=True,
+                            stream=self.log_fp)
+        self.log = logging.getLogger("polly")
+
+    def flush_log(self):
+        "Make sure log records are flushed."
+        log_fp = self.log_fp
+        if log_fp is not None and not log_fp.closed:
+            log_fp.flush()
 
     def consider_words(self, candidates):
         "Filter out tokens which are non-ascii or look like HTML tags."
@@ -403,7 +402,8 @@ class Polly:
                         self.log.log(level, *args, **kwds)
                 except queue.Empty:
                     pass
-
+                finally:
+                    self.flush_log()
                 prompt = "? " if self.options["prompt"] else ""
                 command = input(prompt).strip()
                 if not command:
@@ -451,9 +451,6 @@ class Polly:
             elif option == "logfile":
                 self.options["logfile"] = value
                 self.open_log()
-                logging.basicConfig(format=LOG_FORMAT, force=True,
-                                    stream=self.log_fp)
-                self.log = logging.getLogger("polly")
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
                 self.options[option] = int(value)
@@ -751,7 +748,7 @@ GETTERS = {
     "verbose": "get",
     }
 
-def main(args):
+def main():
     "Where it all starts."
 
     # More verbose than DEBUG...
@@ -783,8 +780,7 @@ def main(args):
         }
 
     generate_n = 0
-    configfile = None
-    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:nl:", ["help"])
+    opts, _args = getopt.getopt(sys.argv[1:], "s:u:p:f:c:g:HhL:nl:", ["help"])
     for opt, arg in opts:
         if opt == "-c":
             configfile = arg
@@ -792,10 +788,8 @@ def main(args):
                 with open(configfile) as _cfg:
                     pass
             except OSError:
-                log = logging.getLogger("polly")
-                log.fatal("Specified config file %s does not exist or"
-                          " is not readable.",
-                          configfile)
+                print(f"Specified config file {configfile} does not exist or"
+                      " is not readable.", file=sys.stderr)
                 return 1
             else:
                 read_config(configfile, options)
@@ -822,8 +816,6 @@ def main(args):
             options["hash"] = True
 
     polly = Polly(options)
-    polly.open_log()
-    logging.basicConfig(format=LOG_FORMAT, force=True, stream=polly.log_fp)
 
     # Just generate some passwords
     if generate_n:
@@ -848,4 +840,4 @@ def main(args):
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
