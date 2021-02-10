@@ -656,6 +656,17 @@ class Polly:
         for msg in [message] + exc:
             self.log.error(msg)
 
+    def print_passwords(self, ntimes):
+        "Simplest use. Generate ntimes passwords and exit."
+        try:
+            for _ in range(ntimes):
+                pwd = self.get_password()
+                print(pwd)
+        # pylint: disable=broad-except
+        except Exception:
+            return 1
+        return 0
+
 # Adapted from: https://stackoverflow.com/questions/2183233/
 def add_log_level(name, num, methodname=None):
     """
@@ -739,6 +750,17 @@ def smart_open(filename, mode="r"):
         return bz2.open(filename, mode)
     return open(filename, mode)
 
+def setup_line_editing(rcfile, mode):
+    "Readline setup."
+    readline.parse_and_bind('tab: complete')
+    readline.parse_and_bind('set editing-mode %s' % mode)
+    histfile = os.path.expanduser(rcfile)
+    try:
+        readline.read_history_file(histfile)
+    except IOError:
+        pass
+    atexit.register(readline.write_history_file, histfile)
+
 GETTERS = {
     "digits": "getboolean",
     "editing-mode": "get",
@@ -750,6 +772,7 @@ GETTERS = {
     "maxchars": "getint",
     "minchars": "getint",
     "nwords": "getint",
+    "npwd": "getint",
     "password": "get",
     "picklefile": "get",
     "prompt": "get",
@@ -760,6 +783,35 @@ GETTERS = {
     "user": "get",
     "verbose": "get",
     }
+
+def process_options(args, options):
+    "Parse command line."
+    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:nl:", ["help"])
+    for opt, arg in opts:
+        if opt == "-c":
+            read_config(arg, options)
+        elif opt in ("-h", "--help"):
+            usage()
+            return 0
+        elif opt == "-u":
+            options["user"] = arg
+        elif opt == "-p":
+            options["password"] = arg
+        elif opt == "-f":
+            options["folder"] = arg
+        elif opt == "-s":
+            options["server"] = arg
+        elif opt == "-g":
+            options["npwd"] = int(arg)
+        elif opt == "-L":
+            options["verbose"] = arg
+        elif opt == "-l":
+            options["logfile"] = arg
+        elif opt == "-n":
+            options["prompt"] = False
+        elif opt == "-H":
+            options["hash"] = True
+    return None
 
 def main():
     "Where it all starts."
@@ -780,6 +832,7 @@ def main():
         "lookback": 50,
         "maxchars": 999,
         "minchars": 3,
+        "npwd": 0,
         "nwords": 2048,
         "password": None,
         "picklefile": os.path.join(os.getcwd(), "polly.pkl"),
@@ -792,41 +845,8 @@ def main():
         "verbose": "FATAL",
         }
 
-    generate_n = 0
-    opts, _args = getopt.getopt(sys.argv[1:], "s:u:p:f:c:g:HhL:nl:", ["help"])
-    for opt, arg in opts:
-        if opt == "-c":
-            configfile = arg
-            try:
-                with open(configfile) as _cfg:
-                    pass
-            except OSError:
-                print(f"Specified config file {configfile} does not exist or"
-                      " is not readable.", file=sys.stderr)
-                return 1
-            else:
-                read_config(configfile, options)
-        elif opt in ("-h", "--help"):
-            usage()
-            return 0
-        elif opt == "-u":
-            options["user"] = arg
-        elif opt == "-p":
-            options["password"] = arg
-        elif opt == "-f":
-            options["folder"] = arg
-        elif opt == "-s":
-            options["server"] = arg
-        elif opt == "-g":
-            generate_n = int(arg)
-        elif opt == "-L":
-            options["verbose"] = arg
-        elif opt == "-l":
-            options["logfile"] = arg
-        elif opt == "-n":
-            options["prompt"] = False
-        elif opt == "-H":
-            options["hash"] = True
+    if (res := process_options(sys.argv[1:], options)) is not None:
+        return res
 
     log = smart_open(options["logfile"], "at")
     logging.basicConfig(format=LOG_FORMAT, force=True, stream=log)
@@ -835,19 +855,10 @@ def main():
     polly.log_fp = log
 
     # Just generate some passwords
-    if generate_n:
-        for _ in range(generate_n):
-            print(polly.get_password())
-        return 0
+    if options["npwd"]:
+        return polly.print_passwords(options["npwd"])
 
-    readline.parse_and_bind('tab: complete')
-    readline.parse_and_bind('set editing-mode %s' % options["editing-mode"])
-    histfile = os.path.expanduser('~/.polly.rc')
-    try:
-        readline.read_history_file(histfile)
-    except IOError:
-        pass
-    atexit.register(readline.write_history_file, histfile)
+    setup_line_editing("~/.polly.rc", options["editing-mode"])
 
     try:
         polly.get_commands()
