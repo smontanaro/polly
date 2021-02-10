@@ -87,6 +87,7 @@ import sys
 import textwrap
 import threading
 import time
+import traceback
 
 import imapclient
 
@@ -212,9 +213,12 @@ class Polly:
                 # 20% chance to convert a letter to upper case.
                 if self.options["upper"] and self.rng.random() < 0.4 / length:
                     word[j] = word[j].upper()
+                # We always shuffle extras so that for testing we
+                # exercise the RNG a consistent number of
+                # times. (So he says...)
+                self.rng.shuffle(extras)
                 # 15% chance to insert something between letters.
                 if self.rng.random() < 0.3 / length and extras:
-                    self.rng.shuffle(extras)
                     word[j:j] = extras[0]
             words[i] = "".join(word)
 
@@ -268,7 +272,7 @@ class Polly:
         with open(dictfile) as dictfp:
             raw = [w.strip()
                      for w in dictfp
-                       if (not set(w) & upper_and_punct) and len(w) > 4]
+                       if (not set(w) & upper_and_punct) and len(w) >= 4]
             self.rng.shuffle(raw)
             candidates = set(raw[:nwords])
             if not self.emitted:
@@ -367,6 +371,7 @@ class Polly:
                                             args=())
             self.reader.daemon = True
             self.reader.start()
+            self.reader = None
 
     def get_commands(self):
         "Command loop."
@@ -402,7 +407,12 @@ class Polly:
                 with self:
                     cmdfunc = commands.get(command)
                     if cmdfunc is not None:
-                        cmdfunc(arg)
+                        try:
+                            cmdfunc(arg)
+                        # pylint: disable=broad-except
+                        except Exception:
+                            self.log_exception("Exception caught at main level",
+                                               sys.exc_info())
                         continue
                     self.log.error("Unrecognized command %r", command)
         except (EOFError, KeyboardInterrupt):
@@ -477,12 +487,28 @@ class Polly:
 
     def read_imap(self):
         "Thread target."
-        try:
-            while True:
+        starts = 0
+        while True:
+            try:
                 self.read_loop()
-                time.sleep(150)
-        finally:
-            self.reader = None
+            # pylint: disable=broad-except
+            except Exception:
+                # We catch anything here because we want keep trying,
+                # at least a few times.
+                self.log_exception("Exception raised in IMAP reader thread.",
+                                   sys.exc_info())
+                # Reader thread crapped out. Maybe restart.
+                if starts < 10:
+                    # Hasn't failed enough. Restart.
+                    starts += 1
+                    self.log.warning("Reentering IMAP reader loop (#%d).",
+                                     starts)
+                else:
+                    # Bail out. User must restart app or execute
+                    # 'read' command again.
+                    self.log.error("Too many IMAP reader loop errors!")
+                    return
+            time.sleep(150)
 
     def read_loop(self):
         "Basic loop over IMAP connection."
@@ -623,6 +649,12 @@ class Polly:
                    self.get_charset(message),
                    "replace")
         return body.strip()
+
+    def log_exception(self, message, exc_info):
+        "Log exception with traceback at error level"
+        exc = "".join(traceback.format_exception(*exc_info)).split("\n")
+        for msg in [message] + exc:
+            self.log.error(msg)
 
 # Adapted from: https://stackoverflow.com/questions/2183233/
 def add_log_level(name, num, methodname=None):
