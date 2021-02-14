@@ -73,6 +73,7 @@ import email
 from email.iterators import typed_subpart_iterator
 import getopt
 import gzip
+import hashlib
 import imaplib
 import logging
 import math
@@ -121,6 +122,10 @@ class Polly:
         # Workers will acquire/release Polly to operate on internal
         # data. See __enter__ and __exit__.
         self.sema = threading.Semaphore()
+        # Shared between the main thread and IMAP thread so the former
+        # can signal the latter to exit cleanly.
+        self.exiting = threading.Event()
+        self.exiting.clear()
         # Words already used in a password on this run.
         self.used = set()
         # Cryptographically secure random number generator.
@@ -253,7 +258,9 @@ class Polly:
     def check_dict(self, arg):
         "Check dictionary for missing words."
         not_really_words = " ".join(self.get_not_words(arg))
-        print(textwrap.fill(not_really_words))
+        not_really_words = textwrap.fill(not_really_words).strip()
+        if not_really_words:
+            print(not_really_words)
 
     def add_good_words(self, arg):
         "Extend list of explicitly good words."
@@ -349,9 +356,14 @@ class Polly:
         "Print some summary details."
         self.print_and_log("DEBUG", f"message ids: {len(self.msg_ids)}")
         self.print_and_log("DEBUG", f"all words: {len(self.words)}")
+        md5 = hashlib.new("md5")
+        for word in sorted(self.emitted):
+            md5.update(word.encode("utf-8"))
+        digest = md5.hexdigest()
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
         self.print_and_log("DEBUG", f"common words: {len(self.emitted)}"
-                           f" entropy: {bits * self.options['length']:.3f} bits")
+                           f" entropy: {bits * self.options['length']:.3f} bits"
+                           f" hash: {digest}")
         self.print_and_log("DEBUG", f"'bad' words: {len(self.bad)}")
         self.print_and_log("DEBUG", f"seen uids: {len(self.uids)}"
                            f" {min(self.uids)} -> {max(self.uids)}")
@@ -369,7 +381,6 @@ class Polly:
             self.reader = threading.Thread(target=self.read_imap,
                                             name="imap-thread",
                                             args=())
-            self.reader.daemon = True
             self.reader.start()
             self.reader = None
 
@@ -393,32 +404,36 @@ class Polly:
         }
         try:
             while True:
-                prompt = "? " if self.options["prompt"] else ""
-                command = input(prompt).strip()
-                if not command:
+                prompt = "? " if (sys.stdin.isatty() and
+                                  self.options["prompt"]) else ""
+                user_input = input(prompt).strip()
+                if not user_input:
                     continue
-                try:
-                    command, arg = command.split(None, 1)
-                except ValueError:
-                    arg = ""
-                if command in ("exit", "quit"):
-                    break
+                for command in user_input.split(";"):
+                    command = command.strip()
+                    try:
+                        command, arg = command.split(None, 1)
+                    except ValueError:
+                        arg = ""
+                    if command in ("exit", "quit"):
+                        return
 
-                with self:
-                    cmdfunc = commands.get(command)
-                    if cmdfunc is not None:
-                        try:
-                            cmdfunc(arg)
-                        # pylint: disable=broad-except
-                        except Exception:
-                            self.log_exception("Exception caught at main level",
-                                               sys.exc_info())
-                        continue
-                    self.log.error("Unrecognized command %r", command)
+                    with self:
+                        cmdfunc = commands.get(command)
+                        if cmdfunc is not None:
+                            try:
+                                cmdfunc(arg)
+                            # pylint: disable=broad-except
+                            except Exception:
+                                self.log_exception("Exception caught at main level",
+                                                   sys.exc_info())
+                            continue
+                        self.log.error("Unrecognized command %r", command)
         except (EOFError, KeyboardInterrupt):
             pass
-
-        self.log.info("Awk! Goodbye...")
+        finally:
+            self.exiting.set()
+            self.log.info("Awk! Goodbye...")
 
     # pylint: disable=no-self-use
     def sleep(self, arg):
@@ -508,7 +523,10 @@ class Polly:
                     # 'read' command again.
                     self.log.error("Too many IMAP reader loop errors!")
                     return
-            time.sleep(150)
+            for _ in range(30):
+                if self.exiting.is_set():
+                    return
+                time.sleep(1)
 
     def read_loop(self):
         "Basic loop over IMAP connection."
