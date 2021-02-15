@@ -333,22 +333,24 @@ class Polly:
         "Filter out tokens which are non-ascii or look like HTML tags."
         html = set()
         nemitted = len(self.emitted)
+        # Skip known bad words...
+        candidates = candidates - self.bad
+        minchars = self.options["minchars"]
+        # ... and short words
+        candidates = {word for word in candidates if len(word) >= minchars}
+        nwords = self.options["nwords"]
         for word in candidates:
             wset = set(word)
-            if (word in self.bad or
-                len(word) < self.options["minchars"] or
+            if wset & LOWER != wset:
                 # Only lower case ASCII - no numbers, punct, accents,
                 # HTML tags ...
-                wset & LOWER != wset):
                 continue
             self.words[word] = self.words.get(word, 0) + 1
-            len_words = len(self.words)
-            if (word not in self.emitted and
-                self.words[word] >= 7 and
-                len_words >= 250):
+            if (len_words := len(self.words)) < 250:
+                continue
+            if word not in self.emitted and self.words[word] >= 7:
                 counts = sorted(self.words.values())
-                if (counts.index(self.words[word]) >=
-                    len_words - self.options["nwords"]):
+                if counts.index(self.words[word]) >= len_words - nwords:
                     self.emitted.add(word)
         return (len(self.emitted) - nemitted, len(html))
 
@@ -542,7 +544,7 @@ class Polly:
         # Reference the verbose parameter through the options dict so the
         # user can toggle the setting on-the-fly.
         with imapclient.IMAPClient(options["server"], use_uid=True,
-                                   ssl_context=ssl_context) as server:
+                                   ssl_context=ssl_context, timeout=30.0) as server:
             try:
                 server.login(options["user"], options["password"])
             except (imapclient.exceptions.IMAPClientError, socket.gaierror):
@@ -578,23 +580,38 @@ class Polly:
             uids = list(set(uids) - seen_uids)
             nuids = len(uids)
             self.log.warning("%s: %d new UIDs returned.", folder, nuids)
-            while uids:
+            while uids and not self.exiting.is_set():
                 (chunk, uids) = (uids[:100], uids[100:])
                 chunk = [uid for (_folder, uid) in chunk]
                 result = server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
                 for uid in chunk:
                     seen_uids.add((folder, uid))
-                    nnew += self.process_one_message(uid,
-                                                     result[uid][b"BODY[TEXT]"],
-                                                     result[uid][b"ENVELOPE"],
-                                                     msg_ids)
-                if nnew % 100 == 0:
-                    self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
-                    with self:
-                        self.msg_ids |= msg_ids
-                        self.uids |= seen_uids
-                elif nnew % 10 == 0:
-                    self.log.info("%s new msgs: %d", folder, nnew)
+                    # I have encountered messages which lack either
+                    # envelope or body text. Log those exceptions to
+                    # allow later debugging.
+                    try:
+                        env = result[uid][b"ENVELOPE"]
+                    except KeyError:
+                        self.log_exception(
+                            f"KeyError for {folder}:{uid} (missing envelope)",
+                                           sys.exc_info())
+                        continue
+                    try:
+                        body = result[uid][b"BODY[TEXT]"]
+                    except KeyError:
+                        self.log_exception(
+                            f"KeyError for {folder}:{uid}/{env.message_id}"
+                            " (missing body text)",
+                            sys.exc_info())
+                        continue
+                    nnew += self.process_one_message(uid, body, env, msg_ids)
+                    if nnew % 100 == 0:
+                        self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
+                        with self:
+                            self.msg_ids |= msg_ids
+                            self.uids |= seen_uids
+                    elif nnew % 10 == 0:
+                        self.log.info("%s new msgs: %d", folder, nnew)
             self.log.warning("%s new msgs: %d", folder, nnew)
             return nnew
         finally:
