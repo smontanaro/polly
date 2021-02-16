@@ -4,25 +4,11 @@
 
 usage: %(PROG)s args ...
 
-Note that command line args are processed in order, so later args will
-override earlier. In particular, you probably want to specify the
-config file (-c flag) earlier so you can override values it contains
-from the command line.
+Config File Options
+-------------------
 
-If the -g flag is given, polly will print N passwords, then exit
-without starting a command loop. If the -c flag is given, options are
-read from the named config file.  The -L option is used to control the
-logging level.
-
-When generating passwords, you can specify that they are to be hashed
-using the -H flag. You must also give the type of hash to use. Any
-hash type in Python's hashlib.algorithm tuple is acceptable.
-
-The config file has a single section, Polly. Within that section, any of the
-following options may be defined.
-
-Options
--------
+The following options can be specified in the config file. Some can
+also be given on the command line.
 
 digits         - when True, allow digits between words (default False)
 edit-mode      - editor mode for readline (default 'emacs')
@@ -47,6 +33,8 @@ verbose        - set to string value of log level (default FATAL)
 Commands
 --------
 
+The following commands can be given at the interactive command prompt.
+
 add dictfile n - add n random words from dictfile
 bad word ...   - mark one or more words as bad
 dict dictfile  - report words not present in dictfile
@@ -64,6 +52,7 @@ Readline support is enabled, with input history saved in ~/.polly.rc.
 
 """
 
+import argparse
 import atexit
 import binascii
 import bz2
@@ -71,7 +60,6 @@ import configparser
 import datetime
 import email
 from email.iterators import typed_subpart_iterator
-import getopt
 import gzip
 import hashlib
 import imaplib
@@ -442,45 +430,57 @@ class Polly:
         "sleep for a bit - just to support testing."
         time.sleep(float(arg))
 
+    def set_log_level(self, level):
+        "log level set from config file"
+        if hasattr(logging, level):
+            self.options["verbose"] = level
+            self.log.setLevel(self.options["verbose"])
+        else:
+            self.log.error("%r is not a valid log level name", level)
+
+    def set_logfile(self, filename):
+        "logfile name set from config file"
+        self.options["logfile"] = filename
+        self.log_fp = smart_open(self.options["logfile"], "at")
+        logging.basicConfig(format=LOG_FORMAT, force=True, stream=self.log_fp)
+        self.log = logging.getLogger("polly")
+
+    def set_boolean(self, option, value):
+        "set boolean config option"
+        if value in ("true", "false"):
+            self.options[option] = value == "true"
+        else:
+            self.log.error("%r is not in (true, false)", value)
+
+    def set_edit_mode(self, mode):
+        "constrain readline editing mode to emacs or vi"
+        if mode in ("emacs", "vi"):
+            self.options["editing-mode"] = mode
+        else:
+            self.log.error("%r is not in (emacs, vi)", mode)
+
     def process_option(self, arg):
         "Show or set options."
         if not arg.strip():
             for option in sorted(self.options):
                 value = self.options[option]
-                if option == "folder":
+                if option in ("folder", "folders"):
                     value = ",".join(value)
                 self.print_and_log("DEBUG", f"option {option} {value}")
         else:
             option, value = arg.split()
             if option == "verbose":
-                value = value.upper()
-                if hasattr(logging, value):
-                    self.options["verbose"] = value
-                    self.log.setLevel(self.options["verbose"])
-                else:
-                    self.log.error("%r is not a valid log level name", value)
+                self.set_log_level(value.upper())
             elif option == "logfile":
-                self.options["logfile"] = value
-                self.log_fp = smart_open(self.options["logfile"], "at")
-                logging.basicConfig(format=LOG_FORMAT, force=True,
-                                    stream=self.log_fp)
-                self.log = logging.getLogger("polly")
+                self.set_logfile(value)
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
                 self.options[option] = int(value)
             elif option in ("digits", "punctuation", "upper", "hash", "prompt",
                             "unittests"):
-                value = value.lower()
-                if value in ("true", "false"):
-                    self.options[option] = value == "true"
-                else:
-                    self.log.error("%r is not in (true, false)", value)
+                self.set_boolean(option, value.lower())
             elif option == "editing-mode":
-                value = value.lower()
-                if value in ("emacs", "vi"):
-                    self.options[option] = value
-                else:
-                    self.log.error("%r is not in (emacs, vi)", value)
+                self.set_edit_mode(value.lower())
             elif option == "folder":
                 self.options[option] = [f.strip() for f in value.split(",")]
             else:
@@ -593,7 +593,8 @@ class Polly:
                         env = result[uid][b"ENVELOPE"]
                     except KeyError:
                         self.log_exception(
-                            f"KeyError for {folder}:{uid} (missing envelope)",
+                            f"KeyError for {folder}:{uid} {result[uid]}"
+                            " (missing envelope)",
                                            sys.exc_info())
                         continue
                     try:
@@ -601,7 +602,7 @@ class Polly:
                     except KeyError:
                         self.log_exception(
                             f"KeyError for {folder}:{uid}/{env.message_id}"
-                            " (missing body text)",
+                            " {result[uid]} (missing body text)",
                             sys.exc_info())
                         continue
                     nnew += self.process_one_message(uid, body, env, msg_ids)
@@ -797,6 +798,7 @@ def setup_line_editing(rcfile, mode):
     atexit.register(readline.write_history_file, histfile)
 
 GETTERS = {
+    "configfile": "get",
     "digits": "getboolean",
     "editing-mode": "get",
     "folder": "get",
@@ -807,7 +809,7 @@ GETTERS = {
     "maxchars": "getint",
     "minchars": "getint",
     "nwords": "getint",
-    "npwd": "getint",
+    "npwds": "getint",
     "password": "get",
     "picklefile": "get",
     "prompt": "get",
@@ -819,34 +821,32 @@ GETTERS = {
     "verbose": "get",
     }
 
-def process_options(args, options):
+def process_options(options):
     "Parse command line."
-    opts, _args = getopt.getopt(args, "s:u:p:f:c:g:HhL:nl:", ["help"])
-    for opt, arg in opts:
-        if opt == "-c":
-            read_config(arg, options)
-        elif opt in ("-h", "--help"):
-            usage()
-            return 0
-        elif opt == "-u":
-            options["user"] = arg
-        elif opt == "-p":
-            options["password"] = arg
-        elif opt == "-f":
-            options["folder"] = arg
-        elif opt == "-s":
-            options["server"] = arg
-        elif opt == "-g":
-            options["npwd"] = int(arg)
-        elif opt == "-L":
-            options["verbose"] = arg
-        elif opt == "-l":
-            options["logfile"] = arg
-        elif opt == "-n":
-            options["prompt"] = False
-        elif opt == "-H":
-            options["hash"] = True
-    return None
+    parser = argparse.ArgumentParser(description='Generate XKCD 936-ish passwords'
+                                     ' or input dictionary from IMAP folder(s)')
+    parser.add_argument('-c', '--config', dest='configfile', help='define config file')
+    parser.add_argument('-u', '--user', dest='user', help='IMAP user name')
+    parser.add_argument('-p', '--pass', '--pwd', dest='password', help='IMAP password')
+    parser.add_argument('-f', '--folder', dest='folders', action='append',
+                        help='IMAP folders')
+    parser.add_argument('-s', '--server', dest='server', help='IMAP server')
+    parser.add_argument('-g', '--generate', dest='npwds', type=int, default=0,
+                        help='Number of passwords to generate')
+    parser.add_argument('-L', '--level', dest='verbose', default="FATAL",
+                        help='Log level')
+    parser.add_argument('-l', '--logfile', dest='logfile', default="/dev/stderr",
+                        help='Logfile name')
+    parser.add_argument('-n', '--prompt', dest='prompt', default=True,
+                        action='store_false', help='Suppress display prompt')
+    parser.add_argument('-H', '--hash', dest='hash', default=False, action='store_true',
+                        help='Use constant hash seed (testing only)')
+    args = parser.parse_args()
+    for key in options:
+        if hasattr(args, key):
+            options[key] = getattr(args, key)
+    if options["configfile"] is not None:
+        read_config(options["configfile"], options)
 
 def main():
     "Where it all starts."
@@ -858,6 +858,7 @@ def main():
     # None.  They must be specified on the command line or in the
     # config file if you plan to chat with the server.
     options = {
+        "configfile": None,
         "digits": True,
         "editing-mode": "emacs",
         "folder": None,
@@ -867,7 +868,7 @@ def main():
         "lookback": 50,
         "maxchars": 999,
         "minchars": 3,
-        "npwd": 0,
+        "npwds": 0,
         "nwords": 2048,
         "password": None,
         "picklefile": os.path.join(os.getcwd(), "polly.pkl"),
@@ -880,8 +881,7 @@ def main():
         "verbose": "FATAL",
         }
 
-    if (res := process_options(sys.argv[1:], options)) is not None:
-        return res
+    process_options(options)
 
     log = smart_open(options["logfile"], "at")
     logging.basicConfig(format=LOG_FORMAT, force=True, stream=log)
@@ -889,9 +889,13 @@ def main():
     polly = Polly(options)
     polly.log_fp = log
 
+    # import pprint
+    # pprint.pprint(options)
+    # return 0
+
     # Just generate some passwords
-    if options["npwd"]:
-        return polly.print_passwords(options["npwd"])
+    if options["npwds"] > 0:
+        return polly.print_passwords(options["npwds"])
 
     setup_line_editing("~/.polly.rc", options["editing-mode"])
 
