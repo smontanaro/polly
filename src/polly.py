@@ -889,10 +889,6 @@ def main():
     polly = Polly(options)
     polly.log_fp = log
 
-    # import pprint
-    # pprint.pprint(options)
-    # return 0
-
     # Just generate some passwords
     if options["npwds"] > 0:
         return polly.print_passwords(options["npwds"])
