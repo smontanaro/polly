@@ -576,49 +576,70 @@ class Polly:
             start = (datetime.datetime.now() -
                      datetime.timedelta(days=options["lookback"]))
             uids = server.search([b"SINCE", start.date()])
-            uids = [(folder, uid) for uid in uids]
+            uids = sorted((folder, uid) for uid in uids)
             uids = list(set(uids) - seen_uids)
             nuids = len(uids)
             self.log.warning("%s: %d new UIDs returned.", folder, nuids)
             while uids and not self.exiting.is_set():
                 (chunk, uids) = (uids[:100], uids[100:])
                 chunk = [uid for (_folder, uid) in chunk]
-                result = server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
-                for uid in chunk:
-                    seen_uids.add((folder, uid))
-                    # I have encountered messages which lack either
-                    # envelope or body text. Log those exceptions to
-                    # allow later debugging.
-                    try:
-                        env = result[uid][b"ENVELOPE"]
-                    except KeyError:
-                        self.log_exception(
-                            f"KeyError for {folder}:{uid} {result[uid]}"
-                            " (missing envelope)",
-                                           sys.exc_info())
-                        continue
-                    try:
-                        body = result[uid][b"BODY[TEXT]"]
-                    except KeyError:
-                        self.log_exception(
-                            f"KeyError for {folder}:{uid}/{env.message_id}"
-                            " {result[uid]} (missing body text)",
-                            sys.exc_info())
-                        continue
-                    nnew += self.process_one_message(uid, body, env, msg_ids)
-                    if nnew % 100 == 0:
-                        self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
-                        with self:
-                            self.msg_ids |= msg_ids
-                            self.uids |= seen_uids
-                    elif nnew % 10 == 0:
-                        self.log.info("%s new msgs: %d", folder, nnew)
+                (nnew, retry, seen) = self.process_chunk(server, folder, chunk,
+                                                         msg_ids, nuids, nnew)
+                seen_uids |= seen
+                # In case any UIDs failed, retry them once. In my
+                # limited experience, errors seem to be transient.
+                if retry:
+                    self.log.warning("Failed UIDs on first try: %s", retry)
+                    (nnew, retry, seen) = self.process_chunk(server, folder, retry,
+                                                             msg_ids, nuids, nnew)
+                    seen_uids |= seen
+                    if retry:
+                        self.log.error("Failed UIDs on second try: %s", retry)
             self.log.warning("%s new msgs: %d", folder, nnew)
             return nnew
         finally:
             with self:
                 self.msg_ids |= msg_ids
                 self.uids |= seen_uids
+
+    def process_chunk(self, server, folder, chunk, msg_ids, nuids, nnew):
+        "Fetch body/envelope info for a group of uids."
+        retry = set()
+        seen_uids = set()
+        result = server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
+        self.log.debug("Process folder %s: %s ... %s", folder, chunk[0], chunk[-1])
+        for uid in chunk:
+            seen_uids.add((folder, uid))
+            # I have encountered messages which lack either envelope
+            # or body text. Log those exceptions to allow later
+            # debugging. We will also retry them once.
+            try:
+                env = result[uid][b"ENVELOPE"]
+            except KeyError:
+                self.log_exception(
+                    f"KeyError for {folder}:{uid} {result[uid]}"
+                    " (missing envelope)",
+                    sys.exc_info())
+                retry.add(uid)
+                continue
+            try:
+                body = result[uid][b"BODY[TEXT]"]
+            except KeyError:
+                self.log_exception(
+                    f"KeyError for {folder}:{uid}/{env.message_id}"
+                    " {result[uid]} (missing body text)",
+                    sys.exc_info())
+                retry.add(uid)
+                continue
+            nnew += self.process_one_message(uid, body, env, msg_ids)
+            if nnew % 100 == 0:
+                self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
+                with self:
+                    self.msg_ids |= msg_ids
+                    self.uids |= seen_uids
+            elif nnew % 10 == 0:
+                self.log.info("%s new msgs: %d", folder, nnew)
+        return (nnew, sorted(retry), seen_uids)
 
     def process_one_message(self, uid, body, envelope, msg_ids):
         "Handle one message"
