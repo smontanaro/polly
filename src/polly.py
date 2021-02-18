@@ -610,9 +610,11 @@ class Polly:
         self.log.debug("Process folder %s: %s ... %s", folder, chunk[0], chunk[-1])
         for uid in chunk:
             seen_uids.add((folder, uid))
-            # I have encountered messages which lack either envelope
-            # or body text. Log those exceptions to allow later
-            # debugging. We will also retry them once.
+            if uid not in result:
+                self.log.error("UID %s in folder %s not returned from fetch.",
+                               uid, folder)
+                retry.add(uid)
+                continue
             try:
                 env = result[uid][b"ENVELOPE"]
             except KeyError:
