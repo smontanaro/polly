@@ -89,6 +89,7 @@ UPPER = set(string.ascii_uppercase)
 LOWER = set(string.ascii_lowercase)
 DIGITS = set(string.digits)
 
+# pylint: disable=too-many-public-methods
 class Polly:
     "Workhorse of the system."
     def __init__(self, options):
@@ -114,6 +115,9 @@ class Polly:
         # can signal the latter to exit cleanly.
         self.exiting = threading.Event()
         self.exiting.clear()
+        self.server = None
+        self.nnew = 0
+        self.nuids = 0
         # Words already used in a password on this run.
         self.used = set()
         # Cryptographically secure random number generator.
@@ -415,8 +419,9 @@ class Polly:
                                 cmdfunc(arg)
                             # pylint: disable=broad-except
                             except Exception:
-                                self.log_exception("Exception caught at main level",
-                                                   sys.exc_info())
+                                self.log_exception(
+                                    "Exception caught at main level",
+                                    sys.exc_info())
                             continue
                         self.log.error("Unrecognized command %r", command)
         except (EOFError, KeyboardInterrupt):
@@ -544,70 +549,69 @@ class Polly:
         # Reference the verbose parameter through the options dict so the
         # user can toggle the setting on-the-fly.
         with imapclient.IMAPClient(options["server"], use_uid=True,
-                                   ssl_context=ssl_context, timeout=30.0) as server:
+                                   ssl_context=ssl_context,
+                                   timeout=30.0) as self.server:
             try:
-                server.login(options["user"], options["password"])
+                self.server.login(options["user"], options["password"])
             except (imapclient.exceptions.IMAPClientError, socket.gaierror):
                 self.log.error("login failed. check your credentials.")
                 self.log.error("Exiting read loop early")
                 return
             self.log.debug("login successful.")
-            nnew = 0
+            self.nnew = 0
             for folder in options["folder"]:
                 try:
-                    nnew += self.select_and_read(server, folder)
+                    self.select_and_read(folder)
                 except (ConnectionError, imaplib.IMAP4.error) as abt:
                     self.log.error("Server read error %s", abt)
                     self.log.error("Exiting read loop early")
                     return
-            self.log.warning("Finished. All new msgs: %d", nnew)
+            self.log.warning("Finished. All new msgs: %d", self.nnew)
+        self.server = None
 
-    def select_and_read(self, server, folder):
+    def select_and_read(self, folder):
         "Check folder on server for new messages."
         with self:
             options = self.options.copy()
             msg_ids = self.msg_ids.copy()
             seen_uids = self.uids.copy()
         try:
-            server.select_folder(folder)
+            self.server.select_folder(folder)
             self.log.debug("select folder %r.", folder)
-            nnew = 0
             self.log.debug("look back %d days.", options["lookback"])
             start = (datetime.datetime.now() -
                      datetime.timedelta(days=options["lookback"]))
-            uids = server.search([b"SINCE", start.date()])
+            uids = self.server.search([b"SINCE", start.date()])
             uids = sorted((folder, uid) for uid in uids)
             uids = list(set(uids) - seen_uids)
-            nuids = len(uids)
-            self.log.warning("%s: %d new UIDs returned.", folder, nuids)
+            self.nuids = len(uids)
+            self.log.warning("%s: %d new UIDs returned.", folder, self.nuids)
             while uids and not self.exiting.is_set():
                 (chunk, uids) = (uids[:100], uids[100:])
                 chunk = [uid for (_folder, uid) in chunk]
-                (nnew, retry, seen) = self.process_chunk(server, folder, chunk,
-                                                         msg_ids, nuids, nnew)
+                (retry, seen) = self.process_chunk(folder, chunk, msg_ids)
                 seen_uids |= seen
                 # In case any UIDs failed, retry them once. In my
                 # limited experience, errors seem to be transient.
                 if retry:
                     self.log.warning("Failed UIDs on first try: %s", retry)
-                    (nnew, retry, seen) = self.process_chunk(server, folder, retry,
-                                                             msg_ids, nuids, nnew)
+                    (retry, seen) = self.process_chunk(folder, retry, msg_ids)
                     seen_uids |= seen
                     if retry:
                         self.log.error("Failed UIDs on second try: %s", retry)
-            self.log.warning("%s new msgs: %d", folder, nnew)
-            return nnew
+            self.log.warning("%s new msgs: %d", folder, self.nnew)
         finally:
             with self:
                 self.msg_ids |= msg_ids
                 self.uids |= seen_uids
 
-    def process_chunk(self, server, folder, chunk, msg_ids, nuids, nnew):
+    def process_chunk(self, folder, chunk, msg_ids):
         "Fetch body/envelope info for a group of uids."
         retry = set()
         seen_uids = set()
-        result = server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
-        self.log.debug("Process folder %s: %s ... %s", folder, chunk[0], chunk[-1])
+        result = self.server.fetch(chunk, [b'BODY.PEEK[TEXT]', b'ENVELOPE'])
+        self.log.debug("Process folder %s: %s ... %s", folder, chunk[0],
+                       chunk[-1])
         for uid in chunk:
             seen_uids.add((folder, uid))
             if uid not in result:
@@ -633,15 +637,16 @@ class Polly:
                     sys.exc_info())
                 retry.add(uid)
                 continue
-            nnew += self.process_one_message(uid, body, env, msg_ids)
-            if nnew % 100 == 0:
-                self.log.warning("%s new msgs: %d/%d", folder, nnew, nuids)
+            self.process_one_message(uid, body, env, msg_ids)
+            if self.nnew % 100 == 0:
+                self.log.warning("%s new msgs: %d/%d",
+                                 folder, self.nnew, self.nuids)
                 with self:
                     self.msg_ids |= msg_ids
                     self.uids |= seen_uids
-            elif nnew % 10 == 0:
-                self.log.info("%s new msgs: %d", folder, nnew)
-        return (nnew, sorted(retry), seen_uids)
+            elif self.nnew % 10 == 0:
+                self.log.info("%s new msgs: %d", folder, self.nnew)
+        return (sorted(retry), seen_uids)
 
     def process_one_message(self, uid, body, envelope, msg_ids):
         "Handle one message"
@@ -650,7 +655,7 @@ class Polly:
         msg_id = envelope.message_id
         if msg_id in msg_ids:
             # Already processed
-            return 0
+            return
         self.log.debug("UID: %s, Date: %s, Message-ID: %r",
                        uid, envelope.date, msg_id)
         msg_ids.add(msg_id)
@@ -660,7 +665,7 @@ class Polly:
         # the first text/html part we come across).
         text = self.get_body(msg)
         if not text:
-            return 0
+            return
 
         with self:
             nwords, nhtml = self.consider_words(set(text.split()))
@@ -668,7 +673,7 @@ class Polly:
                 self.log.debug("%d new words from %s (%d HTML tags).",
                                nwords, msg_id, nhtml)
 
-        return 1
+        self.nnew += 1
 
     # get_charset and get_body are adapted from:
     #   http://ginstrom.com/scribbles/2007/11/19/parsing-multilingual-email-with-python/
