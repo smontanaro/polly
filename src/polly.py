@@ -384,7 +384,8 @@ class Polly:
         "Fire up IMAP reader thread and exit."
         self.start_reader(_arg)
         self.exiting.set()
-        self.reader.join()
+        if self.reader is not None and self.reader.is_alive():
+            self.reader.join()
 
     def get_commands(self, commands=""):
         "Command loop. Execute argument commands first."
