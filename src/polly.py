@@ -370,18 +370,26 @@ class Polly:
 
     def start_reader(self, _arg):
         "Fire up the IMAP reader thread."
-        if self.reader is None or not self.reader.is_alive():
-            self.log.debug("starting IMAP thread.")
-            self.reader = threading.Thread(target=self.read_imap,
-                                            name="imap-thread",
-                                            args=())
-            self.reader.start()
-            self.reader = None
+        if self.reader is not None and self.reader.is_alive():
+            self.log.warning("IMAP thread already running.")
+            return
+        self.log.debug("starting IMAP thread.")
+        self.reader = threading.Thread(target=self.read_imap,
+                                       name="imap-thread",
+                                       args=())
+        self.reader.start()
+        self.reader = None
 
-    def get_commands(self):
-        "Command loop."
+    def read_and_exit(self, _arg):
+        "Fire up IMAP reader thread and exit."
+        self.start_reader(_arg)
+        self.exiting.set()
+        self.reader.join()
+
+    def get_commands(self, commands=""):
+        "Command loop. Execute argument commands first."
         # Add new commands here as a method which takes a single argument.
-        commands = {
+        cmdmap = {
             "read": self.start_reader,
             "stat": self.print_statistics,
             "rebuild": self.rebuild,
@@ -395,12 +403,17 @@ class Polly:
             "good": self.add_good_words,
             "option": self.process_option,
             "sleep": self.sleep, # just for testing...
+            "once": self.read_and_exit,
         }
         try:
             while True:
-                prompt = "? " if (sys.stdin.isatty() and
-                                  self.options["prompt"]) else ""
-                user_input = input(prompt).strip()
+                if commands:
+                    user_input = commands.strip()
+                    commands = ""
+                else:
+                    prompt = "? " if (sys.stdin.isatty() and
+                                      self.options["prompt"]) else ""
+                    user_input = input(prompt).strip()
                 if not user_input:
                     continue
                 for command in user_input.split(";"):
@@ -413,7 +426,7 @@ class Polly:
                         return
 
                     with self:
-                        cmdfunc = commands.get(command)
+                        cmdfunc = cmdmap.get(command)
                         if cmdfunc is not None:
                             try:
                                 cmdfunc(arg)
@@ -826,6 +839,7 @@ def setup_line_editing(rcfile, mode):
     atexit.register(readline.write_history_file, histfile)
 
 GETTERS = {
+    "commands": "get",
     "configfile": "get",
     "digits": "getboolean",
     "editing-mode": "get",
@@ -869,6 +883,8 @@ def process_options(options):
                         action='store_false', help='Suppress display prompt')
     parser.add_argument('-H', '--hash', dest='hash', default=False, action='store_true',
                         help='Use constant hash seed (testing only)')
+    parser.add_argument('-C', '--commands', dest='commands', default="",
+                        help="Commands to execute instead of generating prompt")
     args = parser.parse_args()
     for key in options:
         if hasattr(args, key):
@@ -886,6 +902,7 @@ def main():
     # None.  They must be specified on the command line or in the
     # config file if you plan to chat with the server.
     options = {
+        "commands": "",
         "configfile": None,
         "digits": True,
         "editing-mode": "emacs",
@@ -924,7 +941,7 @@ def main():
     setup_line_editing("~/.polly.rc", options["editing-mode"])
 
     try:
-        polly.get_commands()
+        polly.get_commands(options["commands"])
     finally:
         polly.save_pfile(None)
 
