@@ -140,11 +140,13 @@ class Polly:
         self._log_fp = log_fp
 
     def __enter__(self):
-        self.sema.acquire()
+        if threading.current_thread() != threading.main_thread():
+            self.sema.acquire()
         return self
 
     def __exit__(self, _type, _value, _traceback):
-        self.sema.release()
+        if threading.current_thread() != threading.main_thread():
+            self.sema.release()
 
     def get_password(self):
         "Generate a password."
@@ -382,10 +384,12 @@ class Polly:
 
     def read_and_exit(self, _arg):
         "Fire up IMAP reader thread and exit."
-        self.start_reader(_arg)
-        self.exiting.set()
         if self.reader is not None and self.reader.is_alive():
-            self.reader.join()
+            self.log.error("IMAP thread is already running.")
+            return
+        # Just one pass...
+        self.read_loop()
+
 
     def get_commands(self, commands=""):
         "Command loop. Execute argument commands first."
