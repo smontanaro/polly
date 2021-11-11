@@ -6,6 +6,8 @@ jobs:
     steps:
       - name: Check out repository code
         uses: actions/checkout@v2
+      - name: Set up test environment
+        run: python -m pip install coverage
       - name: Test Polly
         run: make test
       - run: echo "🍏 This job's status is ${{ job.status }}."
