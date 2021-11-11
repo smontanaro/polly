@@ -361,8 +361,11 @@ class Polly:
                            f" entropy: {bits * self.options['length']:.3f} bits"
                            f" hash: {digest}")
         self.print_and_log("DEBUG", f"'bad' words: {len(self.bad)}")
-        self.print_and_log("DEBUG", f"seen uids: {len(self.uids)}"
-                           f" {min(self.uids)} -> {max(self.uids)}")
+        if self.uids:
+            self.print_and_log("DEBUG", f"seen uids: {len(self.uids)}"
+                               f" {min(self.uids)} -> {max(self.uids)}")
+        else:
+            self.print_and_log("DEBUG", "no uids")
 
     def print_and_log(self, level, msg):
         "Print args and log @ level if log doesn't go to screen."
@@ -437,6 +440,8 @@ class Polly:
                                 cmdfunc(arg)
                             # pylint: disable=broad-except
                             except Exception:
+                                self.log.error("cmdfunc: %s", cmdfunc)
+                                self.log.error("arg: %s", arg)
                                 self.log_exception(
                                     "Exception caught at main level",
                                     sys.exc_info())
