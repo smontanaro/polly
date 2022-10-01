@@ -468,7 +468,7 @@ class Polly:
 
     def set_logfile(self, filename):
         "logfile name set from config file"
-        self.options["logfile"] = filename
+        self.options["logfile"] = os.path.expanduser(filename)
         self.log_fp = smart_open(self.options["logfile"], "at")
         logging.basicConfig(format=LOG_FORMAT, force=True, stream=self.log_fp)
         self.log = logging.getLogger("polly")
@@ -500,7 +500,7 @@ class Polly:
             if option == "verbose":
                 self.set_log_level(value.upper())
             elif option == "logfile":
-                self.set_logfile(value)
+                self.set_logfile(os.path.expanduser(value))
             elif option in ("length", "maxchars", "nwords", "maxchars",
                             "minchars", "lookback"):
                 self.options[option] = int(value)
@@ -828,6 +828,7 @@ def read_config(configfile, options):
             elif key == "verbose":
                 value = value.upper()
             options[key] = value
+    expand_user(options)
 
 def smart_open(filename, mode="r"):
     "use file extension to decide how to open filename"
@@ -847,6 +848,12 @@ def setup_line_editing(rcfile, mode):
     except IOError:
         pass
     atexit.register(readline.write_history_file, histfile)
+
+def expand_user(options):
+    "For options which can be files, expand ~ etc"
+    for key in ("configfile", "logfile", "picklefile",):
+        if options[key] is not None:
+            options[key] = os.path.expanduser(options[key])
 
 GETTERS = {
     "commands": "get",
@@ -899,6 +906,7 @@ def process_options(options):
     for key in options:
         if hasattr(args, key):
             options[key] = getattr(args, key)
+    expand_user(options)
     if options["configfile"] is not None:
         read_config(options["configfile"], options)
 
@@ -926,7 +934,7 @@ def main():
         "npwds": 0,
         "nwords": 2048,
         "password": None,
-        "picklefile": os.path.join(os.getcwd(), "polly.pkl"),
+        "picklefile": os.path.expanduser(os.path.join(os.getcwd(), "polly.pkl")),
         "prompt": True,
         "punctuation": True,
         "server": None,
