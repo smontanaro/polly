@@ -11,3 +11,4 @@ polly.bad
 .coverage
 htmlcov
 *,cover
+.DS_Store
