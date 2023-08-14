@@ -132,14 +132,12 @@ class Polly(Reader):
         # Randomize the selected words a bit.
         self.tweak(words)
 
-        extras = set()
+        extras = set(" ")
         if self.options["punctuation"]:
             extras |= PUNCT
         if self.options["digits"]:
             extras |= DIGITS
         extras = sorted(extras)
-        if not extras:
-            extras = [" "]
         for i in range(len(words)-1, 0, -1):
             self.rng.shuffle(extras)
             words[i:i] = extras[0]
