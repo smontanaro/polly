@@ -12,3 +12,4 @@ polly.bad
 htmlcov
 *,cover
 .DS_Store
+__pycache__
