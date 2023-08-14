@@ -55,11 +55,9 @@ Readline support is enabled, with input history saved in ~/.polly.rc.
 import argparse
 import atexit
 import binascii
-import bz2
 import configparser
 import email
 from email.iterators import typed_subpart_iterator
-import gzip
 import hashlib
 import logging
 import math
@@ -72,12 +70,10 @@ import sys
 import textwrap
 import time
 
-from reader import Reader
+from reader import Reader, smart_open, LOG_FORMAT
 
 
 PROG = os.path.split(sys.argv[0])[1]
-
-LOG_FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
 
 PUNCT = set(string.punctuation)
 UPPER = set(string.ascii_uppercase)
@@ -614,16 +610,6 @@ def read_config(configfile, options):
                 value = value.upper()
             options[key] = value
     expand_user(options)
-
-def smart_open(filename, mode="r", encoding="utf-8"):
-    "use file extension to decide how to open filename"
-    if "b" in mode:
-        encoding = None
-    if filename.endswith(".gz"):
-        return gzip.open(filename, mode, encoding=encoding)
-    if filename.endswith(".bz2"):
-        return bz2.open(filename, mode, encoding=encoding)
-    return open(filename, mode, encoding=encoding)
 
 def setup_line_editing(rcfile, mode):
     "Readline setup."

@@ -1,9 +1,12 @@
 "Reusable IMAP reader"
 
 from abc import abstractmethod
+import bz2
 import datetime
+import gzip
 import imaplib
 import logging
+import os
 import socket
 import ssl
 import sys
@@ -11,6 +14,9 @@ import threading
 import traceback
 
 import imapclient
+
+
+LOG_FORMAT = "%(asctime)-15s %(levelname)s %(message)s"
 
 
 class Reader:
@@ -238,3 +244,13 @@ class Reader:
     def __exit__(self, _type, _value, _traceback):
         if threading.current_thread() != threading.main_thread():
             self.sema.release()
+
+def smart_open(filename, mode="r", encoding="utf-8"):
+    "use file extension to decide how to open filename"
+    if "b" in mode:
+        encoding = None
+    if filename.endswith(".gz"):
+        return gzip.open(filename, mode, encoding=encoding)
+    if filename.endswith(".bz2"):
+        return bz2.open(filename, mode, encoding=encoding)
+    return open(filename, mode, encoding=encoding)
