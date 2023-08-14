@@ -13,6 +13,9 @@ test : FORCE
 
 install : $(INSTDIR)/polly
 
+lint : FORCE
+	pylint src/*.py
+
 $(INSTDIR)/polly : $(PWD)/src/polly.py
 	rm -f $(INSTDIR)/polly
 	cp -p src/polly.py $(INSTDIR)/polly
