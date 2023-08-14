@@ -1,7 +1,7 @@
 
 INSTDIR = $(HOME)/local/bin
 
-all : doc
+all : doc lint
 
 doc : README.html
 
