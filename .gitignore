@@ -13,3 +13,4 @@ htmlcov
 *,cover
 .DS_Store
 __pycache__
+dist
