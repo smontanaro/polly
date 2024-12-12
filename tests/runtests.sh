@@ -62,6 +62,7 @@ option logfile /tmp/trash
 bad djm efore etty fter ginal ilt ong tle
 add ${TMPDIR}/extra.words 1
 good polly.good
+trim 10
 rebuild
 dict american-english-large.txt
 option digits false
