@@ -1,6 +1,4 @@
 
-INSTDIR = $(HOME)/local/bin
-
 all : doc lint
 
 doc : README.html
@@ -11,15 +9,11 @@ README.html : README.md
 test : FORCE
 	bash tests/runtests.sh
 
-install : $(INSTDIR)/polly
+install : FORCE
+	@echo "Use 'python -m build && python -m pip install ...'"
 
 lint : FORCE
 	pylint src/*.py
-
-$(INSTDIR)/polly : $(PWD)/src/polly.py
-	rm -f $(INSTDIR)/polly
-	cp -p src/polly.py $(INSTDIR)/polly
-	chmod +x $(INSTDIR)/polly
 
 FORCE :
 
