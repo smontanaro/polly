@@ -71,7 +71,7 @@ import sys
 import textwrap
 import time
 
-from reader import Reader, smart_open, LOG_FORMAT
+from polly.reader import Reader, smart_open, LOG_FORMAT
 
 
 PROG = os.path.split(sys.argv[0])[1]
@@ -405,7 +405,8 @@ class Polly(Reader):
         for word in self.words:
             if self.words[word] >= threshold:
                 words[word] = self.words[word]
-        self.log.info(f"Trimmed {len(self.words)-len(words)} entries from the word list.")
+        self.log.info("Trimmed %d entries from the word list.",
+                      len(self.words) - len(words))
         self.words = words
 
     def sleep(self, arg):
