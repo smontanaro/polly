@@ -29,7 +29,7 @@ if [ "x$DOCOV" = "x1" ] ; then
 fi
 for f in $(ls tests/cfgs/test-*.cfg) ; do
     echo "* $f"
-    ${PYTHON} src/polly.py -g 5 -c ${f}
+    ${PYTHON} -m polly.polly -g 5 -c ${f}
     echo ""
 done > ${OUT}
 
@@ -83,7 +83,7 @@ option verbose info
 stat
 EOF
 
-${PYTHON} src/polly.py -n -c ${TMPDIR}/test.cfg < ${TMPDIR}/test.cmds
+${PYTHON} -m polly.polly -n -c ${TMPDIR}/test.cfg < ${TMPDIR}/test.cmds
 
 if [ "x$DOCOV" = "x1" ] ; then
     coverage html
