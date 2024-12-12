@@ -13,7 +13,7 @@ install : FORCE
 	@echo "Use 'python -m build && python -m pip install ...'"
 
 lint : FORCE
-	pylint src/*.py
+	pylint polly/*.py
 
 FORCE :
 
