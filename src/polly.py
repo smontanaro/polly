@@ -46,6 +46,7 @@ read           - read messages from the IMAP server in a second thread
 rebuild        - rebuild the 'good' words list
 save           - write the pickle save file and bad words file
 stat           - print some simple statistics about the collected words
+trim           - trim words with counts less than the threshold
 verbose        - toggle verbose flag
 
 Readline support is enabled, with input history saved in ~/.polly.rc.
@@ -344,6 +345,7 @@ class Polly(Reader):
             "read": self.start_reader,
             "stat": self.print_statistics,
             "rebuild": self.rebuild,
+            "trim": self.trim,
             "save": self.save_pfile,
             "help": usage,
             "?": usage,
@@ -395,6 +397,16 @@ class Polly(Reader):
         finally:
             self.exiting.set()
             self.log.info("Awk! Goodbye...")
+
+    def trim(self, arg):
+        "trim words with frequencies less than arg."
+        threshold = int(arg)
+        words = {}
+        for word in self.words:
+            if self.words[word] >= threshold:
+                words[word] = self.words[word]
+        self.log.info(f"Trimmed {len(self.words)-len(words)} entries from the word list.")
+        self.words = words
 
     def sleep(self, arg):
         "sleep for a bit - just to support testing."
