@@ -312,12 +312,12 @@ class Polly(Reader):
             md5.update(word.encode("utf-8"))
         digest = md5.hexdigest()
         bits = math.log(len(self.emitted), 2) if self.emitted else 0
-        self.print_and_log("DEBUG", f"common words: {len(self.emitted)}"
+        self.print_and_log("INFO", f"common words: {len(self.emitted)}"
                            f" entropy: {bits * self.options['length']:.3f} bits"
                            f" hash: {digest}")
-        self.print_and_log("DEBUG", f"'bad' words: {len(self.bad)}")
+        self.print_and_log("INFO", f"'bad' words: {len(self.bad)}")
         if self.uids:
-            self.print_and_log("DEBUG", f"seen uids: {len(self.uids)}"
+            self.print_and_log("INFO", f"seen uids: {len(self.uids)}"
                                f" {min(self.uids)} -> {max(self.uids)}")
         else:
             self.print_and_log("DEBUG", "no uids")

@@ -110,7 +110,7 @@ class Reader:
                 self.log.error("login failed. check your credentials.")
                 self.log.error("Exiting read loop early")
                 return
-            self.log.debug("login successful.")
+            self.log.info("login successful.")
             self.nnew = 0
             for folder in options["folder"]:
                 try:
