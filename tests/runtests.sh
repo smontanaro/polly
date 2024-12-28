@@ -8,10 +8,13 @@ trap "rm -rf ${TMPDIR}" EXIT
 OUT=${TMPDIR}/actual.out
 DOCOV=0
 
-while getopts 'c' OPTION; do
+while getopts 'ce' OPTION; do
     case "$OPTION" in
         c)
             DOCOV=1
+            ;;
+        e)
+            ERASECOV=1
             ;;
     esac
 done
@@ -23,7 +26,7 @@ else
     PYTHON='python'
 fi
 
-if [ "x$DOCOV" = "x1" ] ; then
+if [ "x$ERASECOV" = "x1" ] ; then
     coverage erase
     rm -rf htmlcov
 fi
@@ -82,6 +85,7 @@ option verbose trace
 sleep 5
 option verbose info
 stat
+tribble
 EOF
 
 ${PYTHON} -m polly.polly -n -c ${TMPDIR}/test.cfg < ${TMPDIR}/test.cmds
