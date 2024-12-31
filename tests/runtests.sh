@@ -74,6 +74,7 @@ add ${TMPDIR}/extra.words 1
 good polly.good
 trim 10
 rebuild
+dict missing.txt
 dict american-english-large.txt
 option digits false
 option length 7
@@ -81,18 +82,21 @@ option editing-mode vi
 option verbose info
 password
 read
-sleep 5
+sleep 2.2
 option verbose trace
-sleep 5
+sleep 2.2
 option verbose debug
-sleep 5
+sleep 2.2
 option verbose warning
-sleep 5
+sleep 2.2
 option verbose trace
-sleep 5
+sleep 2.2
 option verbose info
 stat
 tribble
+fail
+
+exit
 EOF
 
 ${PYTHON} -m polly.polly -n -c ${TMPDIR}/test.cfg < ${TMPDIR}/test.cmds

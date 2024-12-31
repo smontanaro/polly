@@ -355,9 +355,12 @@ class Polly(Reader):
             "add": self.add_words,
             "good": self.add_good_words,
             "option": self.process_option,
-            "sleep": self.sleep, # just for testing...
             "once": self.read_and_exit,
-        }
+
+            # just for testing...
+            "sleep": self.sleep,
+            "fail": self.fail,          # always fails
+            }
         try:
             while True:
                 if commands:
@@ -412,6 +415,10 @@ class Polly(Reader):
     def sleep(self, arg):
         "sleep for a bit - just to support testing."
         time.sleep(float(arg))
+
+    def fail(self, _arg):
+        "always fails, just for code coverage in tests"
+        raise SystemError
 
     def set_boolean(self, option, value):
         "set boolean config option"
