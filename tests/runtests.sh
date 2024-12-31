@@ -2,14 +2,15 @@
 
 # Run tests. Output is compared with expected.out
 
-export TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
-
-OUT=${TMPDIR}/actual.out
 DOCOV=0
+TMPDIR=
 
-while getopts 'ce' OPTION; do
+while getopts 'cet' OPTION; do
     case "$OPTION" in
+        t)
+            export TMPDIR=$(mktemp -d)
+            trap "rm -rf ${TMPDIR}" EXIT
+            ;;
         c)
             DOCOV=1
             ;;
@@ -19,6 +20,12 @@ while getopts 'ce' OPTION; do
     esac
 done
 shift "$(($OPTIND -1))"
+
+if [ "x$TMPDIR" = "x" ] ; then
+    export TMPDIR=/tmp
+fi
+
+OUT=${TMPDIR}/actual.out
 
 if [ "x$DOCOV" = "x1" ] ; then
     PYTHON='coverage run --concurrency=thread --append'
@@ -30,7 +37,7 @@ if [ "x$ERASECOV" = "x1" ] ; then
     coverage erase
     rm -rf htmlcov
 fi
-for f in $(ls tests/cfgs/test-*.cfg) ; do
+for f in tests/cfgs/test-*.cfg ; do
     echo "* $f"
     ${PYTHON} -m polly.polly -g 5 -c ${f}
     echo ""
