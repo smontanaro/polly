@@ -305,8 +305,8 @@ class Polly(Reader):
 
     def print_statistics(self, _arg):
         "Print some summary details."
-        self.print_and_log("DEBUG", f"message ids: {len(self.msg_ids)}")
-        self.print_and_log("DEBUG", f"all words: {len(self.words)}")
+        self.print_and_log("INFO", f"message ids: {len(self.msg_ids)}")
+        self.print_and_log("INFO", f"all words: {len(self.words)}")
         md5 = hashlib.new("md5")
         for word in sorted(self.emitted):
             md5.update(word.encode("utf-8"))
@@ -320,7 +320,7 @@ class Polly(Reader):
             self.print_and_log("INFO", f"seen uids: {len(self.uids)}"
                                f" {min(self.uids)} -> {max(self.uids)}")
         else:
-            self.print_and_log("DEBUG", "no uids")
+            self.print_and_log("INFO", "no uids")
 
     def print_and_log(self, level, msg):
         "Print args and log @ level if log doesn't go to screen."
